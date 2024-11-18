@@ -17,7 +17,7 @@ Flutter GUI wrapper for stable-diffusion.cpp - Run Stable Diffusion locally on A
 
 - Performance optimizations:
     - OpenBLAS acceleration
-    - TAESD for faster decoding
+    - TAESD for faster decoding (reduces latent decode time from ~48s to ~2s)
 
 - Advanced features:
     - LoRA support

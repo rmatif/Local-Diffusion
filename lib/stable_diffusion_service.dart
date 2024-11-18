@@ -35,12 +35,14 @@ class BufferPool {
 class StableDiffusionService {
   static String? modelPath;
   static String? loraPath;
+  static String? taesdPath;
   static Pointer<Void>? _ctx;
   static final _progressController =
       StreamController<ProgressUpdate>.broadcast();
   static final _logController = StreamController<LogMessage>.broadcast();
   static bool _isInitialized = false;
   static bool _useFlashAttention = false;
+  static bool _useTinyAutoencoder = false;
   static late int _numCores;
 
   static Stream<ProgressUpdate> get progressStream =>
@@ -52,6 +54,14 @@ class StableDiffusionService {
     if (_ctx != null) {
       initializeModel();
     }
+  }
+
+  static bool setTinyAutoencoder(bool value) {
+    if (value && taesdPath == null) {
+      return false;
+    }
+    _useTinyAutoencoder = value;
+    return true;
   }
 
   static void _logCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
@@ -124,6 +134,29 @@ class StableDiffusionService {
     }
   }
 
+  static Future<String> pickAndInitializeTAESD() async {
+    try {
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.any, allowMultiple: false);
+
+      if (result == null) return "No TAESD file selected";
+
+      final filename = result.files.single.name;
+      if (!filename.endsWith('.safetensors')) {
+        return "Please select a .safetensors file for TAESD";
+      }
+
+      taesdPath = result.files.single.path!;
+      if (modelPath != null && _useTinyAutoencoder) {
+        initializeModel();
+      }
+
+      return "TAESD model selected: ${taesdPath!.split('/').last}";
+    } catch (e) {
+      return "Error picking TAESD file: $e";
+    }
+  }
+
   static String initializeModel() {
     if (modelPath == null || modelPath!.isEmpty) {
       return "Model path not set";
@@ -131,16 +164,27 @@ class StableDiffusionService {
 
     _initializeOnce();
 
+    // Free existing context before creating a new one
+    if (_ctx != null) {
+      FFIBindings.freeSdCtx(_ctx!);
+      _ctx = null;
+    }
+
     final modelPathPtr = modelPath!.toNativeUtf8();
     final emptyPtr = BufferPool.getStringBuffer('empty', "");
     final loraDirPtr =
         "/data/user/0/com.example.sd_test_app/cache/file_picker".toNativeUtf8();
+    final taesdPathPtr = (_useTinyAutoencoder && taesdPath != null)
+        ? taesdPath!.toNativeUtf8()
+        : emptyPtr;
 
     try {
       developer.log(
           "LORA directory set to: /data/user/0/com.example.sd_test_app/cache/file_picker");
       developer.log(
           "Flash Attention is ${_useFlashAttention ? 'enabled' : 'disabled'}");
+      developer.log(
+          "Tiny AutoEncoder is ${_useTinyAutoencoder ? 'enabled' : 'disabled'}");
 
       _ctx = FFIBindings.newSdCtx(
           modelPathPtr,
@@ -149,7 +193,7 @@ class StableDiffusionService {
           emptyPtr,
           emptyPtr,
           emptyPtr,
-          emptyPtr,
+          taesdPathPtr,
           emptyPtr,
           loraDirPtr,
           emptyPtr,
@@ -174,6 +218,11 @@ class StableDiffusionService {
     } finally {
       calloc.free(modelPathPtr);
       calloc.free(loraDirPtr);
+      if (_useTinyAutoencoder &&
+          taesdPath != null &&
+          taesdPathPtr != emptyPtr) {
+        calloc.free(taesdPathPtr);
+      }
     }
   }
 
@@ -248,6 +297,10 @@ class StableDiffusionService {
   static int getCores() => FFIBindings.getCores();
 
   static void dispose() {
+    if (_ctx != null) {
+      FFIBindings.freeSdCtx(_ctx!);
+      _ctx = null;
+    }
     BufferPool.dispose();
     _progressController.close();
     _logController.close();

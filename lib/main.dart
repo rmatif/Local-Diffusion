@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
+import 'dart:async';
 import 'stable_diffusion_service.dart';
 
 void main() {
-  runApp(MaterialApp(
-    home: const MyApp(),
+  runApp(const MaterialApp(
+    home: MyApp(),
   ));
 }
 
@@ -19,9 +20,12 @@ class _MyAppState extends State<MyApp> {
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _negativePromptController =
       TextEditingController();
+  Timer? _errorMessageTimer;
 
   String _message = '';
   String _loraMessage = '';
+  String _taesdMessage = '';
+  String _taesdError = '';
   int _cores = 0;
   double _cfgScale = 7.0;
   int _steps = 20;
@@ -29,11 +33,32 @@ class _MyAppState extends State<MyApp> {
   int _height = 512;
   int _seed = 42;
   Image? _generatedImage;
+  bool _useTinyAutoencoder = false;
+
+  void _showTemporaryError(String error) {
+    _errorMessageTimer?.cancel();
+    setState(() {
+      _taesdError = error;
+    });
+    _errorMessageTimer = Timer(const Duration(seconds: 10), () {
+      setState(() {
+        _taesdError = '';
+      });
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     _cores = StableDiffusionService.getCores();
+  }
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    _negativePromptController.dispose();
+    _errorMessageTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -56,52 +81,112 @@ class _MyAppState extends State<MyApp> {
               const SizedBox(height: 20),
               Row(
                 children: [
-                  ElevatedButton(
-                    onPressed: () async {
-                      final bool? useFlashAttention = await showDialog<bool>(
-                        context: context,
-                        builder: (BuildContext context) {
-                          return AlertDialog(
-                            title: const Text('Model Initialization Options'),
-                            content: const Text(
-                                'How would you like to load the model?'),
-                            actions: <Widget>[
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, true),
-                                child: const Text('With Flash Attention'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: const Text('Without Flash Attention'),
-                              ),
-                            ],
-                          );
-                        },
-                      );
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final bool? useFlashAttention = await showDialog<bool>(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              title: const Text('Model Initialization Options'),
+                              content: const Text(
+                                  'How would you like to load the model?'),
+                              actions: <Widget>[
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('With Flash Attention'),
+                                ),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(context, false),
+                                  child: const Text('Without Flash Attention'),
+                                ),
+                              ],
+                            );
+                          },
+                        );
 
-                      if (useFlashAttention != null) {
-                        StableDiffusionService.setFlashAttention(
-                            useFlashAttention);
-                        final result = await StableDiffusionService
-                            .pickAndInitializeModel();
-                        setState(() {
-                          _message = result;
-                        });
-                      }
-                    },
-                    child: const Text('Initialize Model'),
+                        if (useFlashAttention != null) {
+                          StableDiffusionService.setFlashAttention(
+                              useFlashAttention);
+                          final result = await StableDiffusionService
+                              .pickAndInitializeModel();
+                          setState(() {
+                            _message = result;
+                            _taesdError = '';
+                          });
+                        }
+                      },
+                      child: const Text('Initialize Model'),
+                    ),
                   ),
                   const SizedBox(width: 10),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final result =
-                          await StableDiffusionService.pickAndInitializeLora();
-                      setState(() {
-                        _loraMessage = result;
-                      });
-                    },
-                    child: const Text('Load LORA'),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final result = await StableDiffusionService
+                            .pickAndInitializeLora();
+                        setState(() {
+                          _loraMessage = result;
+                        });
+                      },
+                      child: const Text('Load LORA'),
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _useTinyAutoencoder,
+                        onChanged: (bool? value) {
+                          if (StableDiffusionService.taesdPath == null) {
+                            _showTemporaryError(
+                                'Please load TAESD model first');
+                            return;
+                          }
+                          setState(() {
+                            if (StableDiffusionService.setTinyAutoencoder(
+                                value ?? false)) {
+                              _useTinyAutoencoder = value ?? false;
+                              StableDiffusionService.initializeModel();
+                              _taesdError = '';
+                            }
+                          });
+                        },
+                      ),
+                      const Text('Use Tiny AutoEncoder'),
+                      const Spacer(),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final result = await StableDiffusionService
+                              .pickAndInitializeTAESD();
+                          setState(() {
+                            _taesdMessage = result;
+                            _taesdError = '';
+                          });
+                        },
+                        child: const Text('Load TAESD'),
+                      ),
+                    ],
+                  ),
+                  if (_taesdError.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8.0),
+                      child: Text(
+                        _taesdError,
+                        style: const TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                    ),
+                  if (_taesdMessage.isNotEmpty)
+                    Text(
+                      'TAESD: $_taesdMessage',
+                      style: const TextStyle(fontSize: 16),
+                    ),
                 ],
               ),
               const SizedBox(height: 20),
@@ -221,12 +306,5 @@ class _MyAppState extends State<MyApp> {
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _promptController.dispose();
-    _negativePromptController.dispose();
-    super.dispose();
   }
 }
