@@ -40,11 +40,19 @@ class StableDiffusionService {
       StreamController<ProgressUpdate>.broadcast();
   static final _logController = StreamController<LogMessage>.broadcast();
   static bool _isInitialized = false;
+  static bool _useFlashAttention = false;
   static late int _numCores;
 
   static Stream<ProgressUpdate> get progressStream =>
       _progressController.stream;
   static Stream<LogMessage> get logStream => _logController.stream;
+
+  static void setFlashAttention(bool value) {
+    _useFlashAttention = value;
+    if (_ctx != null) {
+      initializeModel();
+    }
+  }
 
   static void _logCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
     final message = text.toDartString();
@@ -131,6 +139,8 @@ class StableDiffusionService {
     try {
       developer.log(
           "LORA directory set to: /data/user/0/com.example.sd_test_app/cache/file_picker");
+      developer.log(
+          "Flash Attention is ${_useFlashAttention ? 'enabled' : 'disabled'}");
 
       _ctx = FFIBindings.newSdCtx(
           modelPathPtr,
@@ -147,8 +157,10 @@ class StableDiffusionService {
           false,
           false,
           false,
-          _numCores, // Using all available cores
-          0,
+          _numCores,
+          _useFlashAttention
+              ? SDType.SD_TYPE_F16.index
+              : SDType.SD_TYPE_F32.index,
           0,
           0,
           false,
@@ -209,7 +221,6 @@ class StableDiffusionService {
       final image = result.cast<SDImage>().ref;
       final bytes = image.data.asTypedList(width * height * image.channel);
 
-      // Use buffer pool for RGBA conversion
       final rgbaBytes = BufferPool.getRgbaBuffer(width * height * 4);
       for (var i = 0; i < width * height; i++) {
         rgbaBytes[i * 4] = bytes[i * 3];

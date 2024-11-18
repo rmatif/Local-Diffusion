@@ -13,6 +13,23 @@ typedef ProgressCallbackNative = Void Function(
 typedef ProgressCallback = void Function(
     int step, int steps, double time, Pointer<Void> data);
 
+enum SDType {
+  SD_TYPE_F32,
+  SD_TYPE_F16,
+  SD_TYPE_Q4_0,
+  SD_TYPE_Q4_1,
+  SD_TYPE_Q5_0,
+  SD_TYPE_Q5_1,
+  SD_TYPE_Q8_0,
+  SD_TYPE_Q8_1,
+  SD_TYPE_Q2_K,
+  SD_TYPE_Q3_K,
+  SD_TYPE_Q4_K,
+  SD_TYPE_Q5_K,
+  SD_TYPE_Q6_K,
+  SD_TYPE_Q8_K,
+}
+
 class FFIBindings {
   static final DynamicLibrary _lib = _loadLibrary();
 

@@ -30,7 +30,7 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
-
+/stable-diffusion.cpp/
 # Symbolication related
 app.*.symbols
 

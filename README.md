@@ -17,7 +17,6 @@ Flutter GUI wrapper for stable-diffusion.cpp - Run Stable Diffusion locally on A
 
 - Performance optimizations:
     - OpenBLAS acceleration
-    - Flash Attention support (reduces memory usage)
     - TAESD for faster decoding
 
 - Advanced features:
@@ -35,6 +34,14 @@ Flutter GUI wrapper for stable-diffusion.cpp - Run Stable Diffusion locally on A
     - DPM++ 2M v2
     - DPM++ 2S a
     - LCM
+
+## Flash Attention Support
+
+When initializing a model, you can choose to load it with or without Flash Attention:
+- With Flash Attention: Uses ~2.7GB RAM, achieves 12.2 it/s
+- Without Flash Attention: Uses ~2.0GB RAM, achieves 10.2 it/s
+
+These measurements were taken using SD 1.5 fp16 model.
 
 ## Roadmap
 

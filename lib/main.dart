@@ -3,7 +3,9 @@ import 'dart:ui' as ui;
 import 'stable_diffusion_service.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(MaterialApp(
+    home: const MyApp(),
+  ));
 }
 
 class MyApp extends StatefulWidget {
@@ -56,11 +58,36 @@ class _MyAppState extends State<MyApp> {
                 children: [
                   ElevatedButton(
                     onPressed: () async {
-                      final result =
-                          await StableDiffusionService.pickAndInitializeModel();
-                      setState(() {
-                        _message = result;
-                      });
+                      final bool? useFlashAttention = await showDialog<bool>(
+                        context: context,
+                        builder: (BuildContext context) {
+                          return AlertDialog(
+                            title: const Text('Model Initialization Options'),
+                            content: const Text(
+                                'How would you like to load the model?'),
+                            actions: <Widget>[
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: const Text('With Flash Attention'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Without Flash Attention'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+
+                      if (useFlashAttention != null) {
+                        StableDiffusionService.setFlashAttention(
+                            useFlashAttention);
+                        final result = await StableDiffusionService
+                            .pickAndInitializeModel();
+                        setState(() {
+                          _message = result;
+                        });
+                      }
                     },
                     child: const Text('Initialize Model'),
                   ),
