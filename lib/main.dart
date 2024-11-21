@@ -37,6 +37,8 @@ class _MyAppState extends State<MyApp> {
   Image? _generatedImage;
   bool _useTinyAutoencoder = false;
   SDType selectedType = SDType.NONE;
+  SampleMethod _selectedSampleMethod = SampleMethod.EULER_A;
+  Schedule _selectedSchedule = Schedule.DISCRETE;
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -91,9 +93,13 @@ class _MyAppState extends State<MyApp> {
                           StableDiffusionService.freeCurrentModel();
                         }
 
-                        final result = await showDialog<(bool, SDType)>(
+                        final result =
+                            await showDialog<(bool, SDType, Schedule)>(
                           context: context,
                           builder: (BuildContext context) {
+                            Schedule dialogSchedule = Schedule.DISCRETE;
+                            SDType dialogType = SDType.NONE;
+
                             return StatefulBuilder(
                               builder: (context, setState) {
                                 return AlertDialog(
@@ -102,8 +108,10 @@ class _MyAppState extends State<MyApp> {
                                   content: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
+                                      const Text('Model Type'),
                                       DropdownButton<SDType>(
-                                        value: selectedType,
+                                        value: dialogType,
+                                        isExpanded: true,
                                         items: SDType.values.map((SDType type) {
                                           return DropdownMenuItem<SDType>(
                                             value: type,
@@ -113,9 +121,26 @@ class _MyAppState extends State<MyApp> {
                                         onChanged: (SDType? newValue) {
                                           if (newValue != null) {
                                             setState(() {
-                                              selectedType = newValue;
+                                              dialogType = newValue;
                                             });
                                           }
+                                        },
+                                      ),
+                                      const SizedBox(height: 10),
+                                      const Text('Schedule'),
+                                      DropdownButton<Schedule>(
+                                        value: dialogSchedule,
+                                        isExpanded: true,
+                                        items: Schedule.values.map((schedule) {
+                                          return DropdownMenuItem<Schedule>(
+                                            value: schedule,
+                                            child: Text(schedule.displayName),
+                                          );
+                                        }).toList(),
+                                        onChanged: (Schedule? newValue) {
+                                          setState(() {
+                                            dialogSchedule = newValue!;
+                                          });
                                         },
                                       ),
                                     ],
@@ -127,17 +152,18 @@ class _MyAppState extends State<MyApp> {
                                     ),
                                     TextButton(
                                       onPressed: () {
-                                        developer.log(
-                                            "Dialog selection - Flash: false, Type: ${selectedType}");
-                                        Navigator.pop(
-                                            context, (false, selectedType));
+                                        Navigator.pop(context, (
+                                          false,
+                                          dialogType,
+                                          dialogSchedule
+                                        ));
                                       },
                                       child:
                                           const Text('Without Flash Attention'),
                                     ),
                                     TextButton(
-                                      onPressed: () => Navigator.pop(
-                                          context, (true, selectedType)),
+                                      onPressed: () => Navigator.pop(context,
+                                          (true, dialogType, dialogSchedule)),
                                       child: const Text('With Flash Attention'),
                                     ),
                                   ],
@@ -148,11 +174,15 @@ class _MyAppState extends State<MyApp> {
                         );
 
                         if (result != null) {
-                          final (useFlashAttention, selectedType) = result;
-                          developer.log(
-                              "Pre-config - Flash: $useFlashAttention, Type: ${selectedType}");
+                          final (
+                            useFlashAttention,
+                            selectedType,
+                            selectedSchedule
+                          ) = result;
                           StableDiffusionService.setModelConfig(
-                              useFlashAttention, selectedType);
+                              useFlashAttention,
+                              selectedType,
+                              selectedSchedule);
                           final initResult = await StableDiffusionService
                               .pickAndInitializeModel();
                           setState(() {
@@ -256,6 +286,33 @@ class _MyAppState extends State<MyApp> {
               Row(
                 children: [
                   Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Sampling Method'),
+                        DropdownButton<SampleMethod>(
+                          value: _selectedSampleMethod,
+                          isExpanded: true,
+                          items: SampleMethod.values.map((method) {
+                            return DropdownMenuItem<SampleMethod>(
+                              value: method,
+                              child: Text(method.displayName),
+                            );
+                          }).toList(),
+                          onChanged: (SampleMethod? newValue) {
+                            setState(() {
+                              _selectedSampleMethod = newValue!;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(
                     child: Slider(
                       value: _cfgScale,
                       min: 1.0,
@@ -327,6 +384,7 @@ class _MyAppState extends State<MyApp> {
                     width: _width,
                     height: _height,
                     seed: _seed,
+                    sampleMethod: _selectedSampleMethod.index,
                   );
 
                   if (image != null) {

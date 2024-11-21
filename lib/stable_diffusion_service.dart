@@ -44,16 +44,20 @@ class StableDiffusionService {
   static bool _useFlashAttention = false;
   static bool _useTinyAutoencoder = false;
   static SDType _modelType = SDType.NONE;
+  static Schedule _schedule = Schedule.DISCRETE;
   static late int _numCores;
 
   static Stream<ProgressUpdate> get progressStream =>
       _progressController.stream;
   static Stream<LogMessage> get logStream => _logController.stream;
-  static void setModelConfig(bool useFlashAttention, SDType modelType) {
-    developer
-        .log("Setting config - Flash: $useFlashAttention, Type: ${modelType}");
+
+  static void setModelConfig(
+      bool useFlashAttention, SDType modelType, Schedule schedule) {
+    developer.log(
+        "Setting config - Flash: $useFlashAttention, Type: ${modelType}, Schedule: ${schedule}");
     _useFlashAttention = useFlashAttention;
     _modelType = modelType;
+    _schedule = schedule;
   }
 
   static bool setTinyAutoencoder(bool value) {
@@ -107,8 +111,10 @@ class StableDiffusionService {
       modelPath = result.files.single.path!;
       final filename = result.files.single.name;
 
-      if (!filename.endsWith('.ckpt') && !filename.endsWith('.safetensors')) {
-        return "Please select a .ckpt or .safetensors file";
+      if (!filename.endsWith('.ckpt') &&
+          !filename.endsWith('.safetensors') &&
+          !filename.endsWith('.gguf')) {
+        return "Please select a .ckpt or .safetensors or .gguf file";
       }
 
       return initializeModel();
@@ -160,20 +166,8 @@ class StableDiffusionService {
     }
   }
 
-  // Add this method to check if a model is loaded
   static bool isModelLoaded() {
     return _ctx != null;
-  }
-
-  static bool updateTinyAutoencoder(bool value) {
-    if (value && taesdPath == null) {
-      return false;
-    }
-    if (_ctx != null) {
-      freeCurrentModel();
-    }
-    _useTinyAutoencoder = value;
-    return true;
   }
 
   static void freeCurrentModel() {
@@ -266,7 +260,7 @@ class StableDiffusionService {
           _numCores,
           mappedTypeIndex,
           0,
-          0,
+          _schedule.index,
           false,
           false,
           false);

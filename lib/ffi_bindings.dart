@@ -29,6 +29,21 @@ enum SDType {
   SD_TYPE_Q2_K,
 }
 
+enum SampleMethod {
+  EULER_A,
+  EULER,
+  HEUN,
+  DPM2,
+  DPMPP2S_A,
+  DPMPP2M,
+  DPMPP2Mv2,
+  IPNDM,
+  IPNDM_V,
+  LCM
+}
+
+enum Schedule { DEFAULT, DISCRETE, KARRAS, EXPONENTIAL, AYS, GITS }
+
 extension SDTypeExtension on SDType {
   String get displayName {
     switch (this) {
@@ -59,6 +74,18 @@ extension SDTypeExtension on SDType {
       case SDType.SD_TYPE_Q2_K:
         return 'Q2_K';
     }
+  }
+}
+
+extension SampleMethodExtension on SampleMethod {
+  String get displayName {
+    return toString().split('.').last;
+  }
+}
+
+extension ScheduleExtension on Schedule {
+  String get displayName {
+    return toString().split('.').last;
   }
 }
 
