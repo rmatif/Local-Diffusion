@@ -14,20 +14,52 @@ typedef ProgressCallback = void Function(
     int step, int steps, double time, Pointer<Void> data);
 
 enum SDType {
-  SD_TYPE_F32,
-  SD_TYPE_F16,
-  SD_TYPE_Q4_0,
-  SD_TYPE_Q4_1,
-  SD_TYPE_Q5_0,
-  SD_TYPE_Q5_1,
+  NONE, // No quantization
   SD_TYPE_Q8_0,
   SD_TYPE_Q8_1,
-  SD_TYPE_Q2_K,
-  SD_TYPE_Q3_K,
-  SD_TYPE_Q4_K,
-  SD_TYPE_Q5_K,
-  SD_TYPE_Q6_K,
   SD_TYPE_Q8_K,
+  SD_TYPE_Q6_K,
+  SD_TYPE_Q5_0,
+  SD_TYPE_Q5_1,
+  SD_TYPE_Q5_K,
+  SD_TYPE_Q4_0,
+  SD_TYPE_Q4_1,
+  SD_TYPE_Q4_K,
+  SD_TYPE_Q3_K,
+  SD_TYPE_Q2_K,
+}
+
+extension SDTypeExtension on SDType {
+  String get displayName {
+    switch (this) {
+      case SDType.NONE:
+        return 'None';
+      case SDType.SD_TYPE_Q8_0:
+        return 'Q8_0';
+      case SDType.SD_TYPE_Q8_1:
+        return 'Q8_1';
+      case SDType.SD_TYPE_Q8_K:
+        return 'Q8_K';
+      case SDType.SD_TYPE_Q6_K:
+        return 'Q6_K';
+      case SDType.SD_TYPE_Q5_0:
+        return 'Q5_0';
+      case SDType.SD_TYPE_Q5_1:
+        return 'Q5_1';
+      case SDType.SD_TYPE_Q5_K:
+        return 'Q5_K';
+      case SDType.SD_TYPE_Q4_0:
+        return 'Q4_0';
+      case SDType.SD_TYPE_Q4_1:
+        return 'Q4_1';
+      case SDType.SD_TYPE_Q4_K:
+        return 'Q4_K';
+      case SDType.SD_TYPE_Q3_K:
+        return 'Q3_K';
+      case SDType.SD_TYPE_Q2_K:
+        return 'Q2_K';
+    }
+  }
 }
 
 class FFIBindings {

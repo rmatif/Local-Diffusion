@@ -43,22 +43,25 @@ class StableDiffusionService {
   static bool _isInitialized = false;
   static bool _useFlashAttention = false;
   static bool _useTinyAutoencoder = false;
+  static SDType _modelType = SDType.NONE;
   static late int _numCores;
 
   static Stream<ProgressUpdate> get progressStream =>
       _progressController.stream;
   static Stream<LogMessage> get logStream => _logController.stream;
-
-  static void setFlashAttention(bool value) {
-    _useFlashAttention = value;
-    if (_ctx != null) {
-      initializeModel();
-    }
+  static void setModelConfig(bool useFlashAttention, SDType modelType) {
+    developer
+        .log("Setting config - Flash: $useFlashAttention, Type: ${modelType}");
+    _useFlashAttention = useFlashAttention;
+    _modelType = modelType;
   }
 
   static bool setTinyAutoencoder(bool value) {
     if (value && taesdPath == null) {
       return false;
+    }
+    if (_ctx != null) {
+      freeCurrentModel();
     }
     _useTinyAutoencoder = value;
     return true;
@@ -157,6 +160,29 @@ class StableDiffusionService {
     }
   }
 
+  // Add this method to check if a model is loaded
+  static bool isModelLoaded() {
+    return _ctx != null;
+  }
+
+  static bool updateTinyAutoencoder(bool value) {
+    if (value && taesdPath == null) {
+      return false;
+    }
+    if (_ctx != null) {
+      freeCurrentModel();
+    }
+    _useTinyAutoencoder = value;
+    return true;
+  }
+
+  static void freeCurrentModel() {
+    if (_ctx != null) {
+      FFIBindings.freeSdCtx(_ctx!);
+      _ctx = null;
+    }
+  }
+
   static String initializeModel() {
     if (modelPath == null || modelPath!.isEmpty) {
       return "Model path not set";
@@ -164,10 +190,53 @@ class StableDiffusionService {
 
     _initializeOnce();
 
-    // Free existing context before creating a new one
     if (_ctx != null) {
-      FFIBindings.freeSdCtx(_ctx!);
-      _ctx = null;
+      freeCurrentModel();
+    }
+
+    int mappedTypeIndex;
+    switch (_modelType) {
+      case SDType.NONE:
+        mappedTypeIndex = 34;
+        break;
+      case SDType.SD_TYPE_Q8_0:
+        mappedTypeIndex = 8;
+        break;
+      case SDType.SD_TYPE_Q8_1:
+        mappedTypeIndex = 9;
+        break;
+      case SDType.SD_TYPE_Q8_K:
+        mappedTypeIndex = 15;
+        break;
+      case SDType.SD_TYPE_Q6_K:
+        mappedTypeIndex = 14;
+        break;
+      case SDType.SD_TYPE_Q5_0:
+        mappedTypeIndex = 6;
+        break;
+      case SDType.SD_TYPE_Q5_1:
+        mappedTypeIndex = 7;
+        break;
+      case SDType.SD_TYPE_Q5_K:
+        mappedTypeIndex = 13;
+        break;
+      case SDType.SD_TYPE_Q4_0:
+        mappedTypeIndex = 2;
+        break;
+      case SDType.SD_TYPE_Q4_1:
+        mappedTypeIndex = 3;
+        break;
+      case SDType.SD_TYPE_Q4_K:
+        mappedTypeIndex = 12;
+        break;
+      case SDType.SD_TYPE_Q3_K:
+        mappedTypeIndex = 11;
+        break;
+      case SDType.SD_TYPE_Q2_K:
+        mappedTypeIndex = 10;
+        break;
+      default:
+        mappedTypeIndex = _modelType.index;
     }
 
     final modelPathPtr = modelPath!.toNativeUtf8();
@@ -179,13 +248,6 @@ class StableDiffusionService {
         : emptyPtr;
 
     try {
-      developer.log(
-          "LORA directory set to: /data/user/0/com.example.sd_test_app/cache/file_picker");
-      developer.log(
-          "Flash Attention is ${_useFlashAttention ? 'enabled' : 'disabled'}");
-      developer.log(
-          "Tiny AutoEncoder is ${_useTinyAutoencoder ? 'enabled' : 'disabled'}");
-
       _ctx = FFIBindings.newSdCtx(
           modelPathPtr,
           emptyPtr,
@@ -198,13 +260,11 @@ class StableDiffusionService {
           loraDirPtr,
           emptyPtr,
           emptyPtr,
-          false,
+          _useFlashAttention,
           false,
           false,
           _numCores,
-          _useFlashAttention
-              ? SDType.SD_TYPE_F16.index
-              : SDType.SD_TYPE_F32.index,
+          mappedTypeIndex,
           0,
           0,
           false,

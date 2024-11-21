@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'stable_diffusion_service.dart';
+import 'ffi_bindings.dart';
 
 void main() {
   runApp(const MaterialApp(
@@ -34,6 +36,7 @@ class _MyAppState extends State<MyApp> {
   int _seed = 42;
   Image? _generatedImage;
   bool _useTinyAutoencoder = false;
+  SDType selectedType = SDType.NONE;
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -84,35 +87,76 @@ class _MyAppState extends State<MyApp> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        final bool? useFlashAttention = await showDialog<bool>(
+                        if (StableDiffusionService.isModelLoaded()) {
+                          StableDiffusionService.freeCurrentModel();
+                        }
+
+                        final result = await showDialog<(bool, SDType)>(
                           context: context,
                           builder: (BuildContext context) {
-                            return AlertDialog(
-                              title: const Text('Model Initialization Options'),
-                              content: const Text(
-                                  'How would you like to load the model?'),
-                              actions: <Widget>[
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('With Flash Attention'),
-                                ),
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.pop(context, false),
-                                  child: const Text('Without Flash Attention'),
-                                ),
-                              ],
+                            return StatefulBuilder(
+                              builder: (context, setState) {
+                                return AlertDialog(
+                                  title: const Text(
+                                      'Model Initialization Options'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      DropdownButton<SDType>(
+                                        value: selectedType,
+                                        items: SDType.values.map((SDType type) {
+                                          return DropdownMenuItem<SDType>(
+                                            value: type,
+                                            child: Text(type.displayName),
+                                          );
+                                        }).toList(),
+                                        onChanged: (SDType? newValue) {
+                                          if (newValue != null) {
+                                            setState(() {
+                                              selectedType = newValue;
+                                            });
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  actions: <Widget>[
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        developer.log(
+                                            "Dialog selection - Flash: false, Type: ${selectedType}");
+                                        Navigator.pop(
+                                            context, (false, selectedType));
+                                      },
+                                      child:
+                                          const Text('Without Flash Attention'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(
+                                          context, (true, selectedType)),
+                                      child: const Text('With Flash Attention'),
+                                    ),
+                                  ],
+                                );
+                              },
                             );
                           },
                         );
 
-                        if (useFlashAttention != null) {
-                          StableDiffusionService.setFlashAttention(
-                              useFlashAttention);
-                          final result = await StableDiffusionService
+                        if (result != null) {
+                          final (useFlashAttention, selectedType) = result;
+                          developer.log(
+                              "Pre-config - Flash: $useFlashAttention, Type: ${selectedType}");
+                          StableDiffusionService.setModelConfig(
+                              useFlashAttention, selectedType);
+                          final initResult = await StableDiffusionService
                               .pickAndInitializeModel();
                           setState(() {
-                            _message = result;
+                            _message = initResult;
                             _taesdError = '';
                           });
                         }
