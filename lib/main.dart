@@ -28,6 +28,9 @@ class _MyAppState extends State<MyApp> {
   String _loraMessage = '';
   String _taesdMessage = '';
   String _taesdError = '';
+  String _ramUsage = '';
+  String _progressMessage = '';
+  String _totalTime = '';
   int _cores = 0;
   double _cfgScale = 7.0;
   int _steps = 20;
@@ -39,6 +42,46 @@ class _MyAppState extends State<MyApp> {
   SDType selectedType = SDType.NONE;
   SampleMethod _selectedSampleMethod = SampleMethod.EULER_A;
   Schedule _selectedSchedule = Schedule.DISCRETE;
+
+  StreamSubscription? _logSubscription;
+  StreamSubscription? _progressSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _cores = StableDiffusionService.getCores();
+    _setupSubscriptions();
+  }
+
+  void _setupSubscriptions() {
+    _logSubscription = StableDiffusionService.logStream.listen((logMessage) {
+      if (logMessage.message.contains('total params memory size')) {
+        final regex = RegExp(r'total params memory size = ([\d.]+)MB');
+        final match = regex.firstMatch(logMessage.message);
+        if (match != null) {
+          setState(() {
+            _ramUsage = 'Total RAM Usage: ${match.group(1)}MB';
+          });
+        }
+      } else if (logMessage.message.contains('completed in')) {
+        final regex = RegExp(r'completed in ([\d.]+)s');
+        final match = regex.firstMatch(logMessage.message);
+        if (match != null) {
+          setState(() {
+            _totalTime = 'Generation completed in ${match.group(1)}s';
+          });
+        }
+      }
+    });
+
+    _progressSubscription =
+        StableDiffusionService.progressStream.listen((progress) {
+      setState(() {
+        _progressMessage =
+            'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)';
+      });
+    });
+  }
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -53,16 +96,12 @@ class _MyAppState extends State<MyApp> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    _cores = StableDiffusionService.getCores();
-  }
-
-  @override
   void dispose() {
     _promptController.dispose();
     _negativePromptController.dispose();
     _errorMessageTimer?.cancel();
+    _logSubscription?.cancel();
+    _progressSubscription?.cancel();
     super.dispose();
   }
 
@@ -83,6 +122,11 @@ class _MyAppState extends State<MyApp> {
                 'Available CPU Cores: $_cores',
                 style: const TextStyle(fontSize: 18),
               ),
+              if (_ramUsage.isNotEmpty)
+                Text(
+                  _ramUsage,
+                  style: const TextStyle(fontSize: 18),
+                ),
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -194,7 +238,6 @@ class _MyAppState extends State<MyApp> {
                                         );
                                       },
                                     );
-
                                     if (result != null) {
                                       final (
                                         useFlashAttention,
@@ -403,6 +446,17 @@ class _MyAppState extends State<MyApp> {
                     setState(() => _seed = int.tryParse(value) ?? -1),
               ),
               const SizedBox(height: 20),
+              if (_progressMessage.isNotEmpty)
+                Text(
+                  _progressMessage,
+                  style: const TextStyle(fontSize: 16),
+                ),
+              if (_totalTime.isNotEmpty)
+                Text(
+                  _totalTime,
+                  style: const TextStyle(fontSize: 16),
+                ),
+              const SizedBox(height: 20),
               StreamBuilder<bool>(
                   stream: StableDiffusionService.loadingStream,
                   builder: (context, snapshot) {
@@ -410,7 +464,11 @@ class _MyAppState extends State<MyApp> {
                       onPressed: snapshot.data == true
                           ? null
                           : () async {
-                              setState(() => _message = 'Generating image...');
+                              setState(() {
+                                _message = 'Generating image...';
+                                _progressMessage = '';
+                                _totalTime = '';
+                              });
                               final image =
                                   await StableDiffusionService.generateImage(
                                 prompt: _promptController.text,
