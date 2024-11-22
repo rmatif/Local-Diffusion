@@ -87,112 +87,142 @@ class _MyAppState extends State<MyApp> {
               Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        if (StableDiffusionService.isModelLoaded()) {
-                          StableDiffusionService.freeCurrentModel();
-                        }
+                    child: StreamBuilder<bool>(
+                        stream: StableDiffusionService.loadingStream,
+                        builder: (context, snapshot) {
+                          return ElevatedButton(
+                            onPressed: snapshot.data == true
+                                ? null
+                                : () async {
+                                    if (StableDiffusionService
+                                        .isModelLoaded()) {
+                                      StableDiffusionService.freeCurrentModel();
+                                    }
 
-                        final result =
-                            await showDialog<(bool, SDType, Schedule)>(
-                          context: context,
-                          builder: (BuildContext context) {
-                            Schedule dialogSchedule = Schedule.DISCRETE;
-                            SDType dialogType = SDType.NONE;
+                                    final result = await showDialog<
+                                        (bool, SDType, Schedule)>(
+                                      context: context,
+                                      builder: (BuildContext context) {
+                                        Schedule dialogSchedule =
+                                            Schedule.DISCRETE;
+                                        SDType dialogType = SDType.NONE;
 
-                            return StatefulBuilder(
-                              builder: (context, setState) {
-                                return AlertDialog(
-                                  title: const Text(
-                                      'Model Initialization Options'),
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Text('Model Type'),
-                                      DropdownButton<SDType>(
-                                        value: dialogType,
-                                        isExpanded: true,
-                                        items: SDType.values.map((SDType type) {
-                                          return DropdownMenuItem<SDType>(
-                                            value: type,
-                                            child: Text(type.displayName),
-                                          );
-                                        }).toList(),
-                                        onChanged: (SDType? newValue) {
-                                          if (newValue != null) {
-                                            setState(() {
-                                              dialogType = newValue;
-                                            });
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(height: 10),
-                                      const Text('Schedule'),
-                                      DropdownButton<Schedule>(
-                                        value: dialogSchedule,
-                                        isExpanded: true,
-                                        items: Schedule.values.map((schedule) {
-                                          return DropdownMenuItem<Schedule>(
-                                            value: schedule,
-                                            child: Text(schedule.displayName),
-                                          );
-                                        }).toList(),
-                                        onChanged: (Schedule? newValue) {
-                                          setState(() {
-                                            dialogSchedule = newValue!;
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                  actions: <Widget>[
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () {
-                                        Navigator.pop(context, (
-                                          false,
-                                          dialogType,
-                                          dialogSchedule
-                                        ));
+                                        return StatefulBuilder(
+                                          builder: (context, setState) {
+                                            return AlertDialog(
+                                              title: const Text(
+                                                  'Model Initialization Options'),
+                                              content: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Text('Model Type'),
+                                                  DropdownButton<SDType>(
+                                                    value: dialogType,
+                                                    isExpanded: true,
+                                                    items: SDType.values
+                                                        .map((SDType type) {
+                                                      return DropdownMenuItem<
+                                                          SDType>(
+                                                        value: type,
+                                                        child: Text(
+                                                            type.displayName),
+                                                      );
+                                                    }).toList(),
+                                                    onChanged:
+                                                        (SDType? newValue) {
+                                                      if (newValue != null) {
+                                                        setState(() {
+                                                          dialogType = newValue;
+                                                        });
+                                                      }
+                                                    },
+                                                  ),
+                                                  const SizedBox(height: 10),
+                                                  const Text('Schedule'),
+                                                  DropdownButton<Schedule>(
+                                                    value: dialogSchedule,
+                                                    isExpanded: true,
+                                                    items: Schedule.values
+                                                        .map((schedule) {
+                                                      return DropdownMenuItem<
+                                                          Schedule>(
+                                                        value: schedule,
+                                                        child: Text(schedule
+                                                            .displayName),
+                                                      );
+                                                    }).toList(),
+                                                    onChanged:
+                                                        (Schedule? newValue) {
+                                                      setState(() {
+                                                        dialogSchedule =
+                                                            newValue!;
+                                                      });
+                                                    },
+                                                  ),
+                                                ],
+                                              ),
+                                              actions: <Widget>[
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(context),
+                                                  child: const Text('Cancel'),
+                                                ),
+                                                TextButton(
+                                                  onPressed: () {
+                                                    Navigator.pop(context, (
+                                                      false,
+                                                      dialogType,
+                                                      dialogSchedule
+                                                    ));
+                                                  },
+                                                  child: const Text(
+                                                      'Without Flash Attention'),
+                                                ),
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(context, (
+                                                    true,
+                                                    dialogType,
+                                                    dialogSchedule
+                                                  )),
+                                                  child: const Text(
+                                                      'With Flash Attention'),
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        );
                                       },
-                                      child:
-                                          const Text('Without Flash Attention'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context,
-                                          (true, dialogType, dialogSchedule)),
-                                      child: const Text('With Flash Attention'),
-                                    ),
-                                  ],
-                                );
-                              },
-                            );
-                          },
-                        );
+                                    );
 
-                        if (result != null) {
-                          final (
-                            useFlashAttention,
-                            selectedType,
-                            selectedSchedule
-                          ) = result;
-                          StableDiffusionService.setModelConfig(
-                              useFlashAttention,
-                              selectedType,
-                              selectedSchedule);
-                          final initResult = await StableDiffusionService
-                              .pickAndInitializeModel();
-                          setState(() {
-                            _message = initResult;
-                            _taesdError = '';
-                          });
-                        }
-                      },
-                      child: const Text('Initialize Model'),
-                    ),
+                                    if (result != null) {
+                                      final (
+                                        useFlashAttention,
+                                        selectedType,
+                                        selectedSchedule
+                                      ) = result;
+                                      StableDiffusionService.setModelConfig(
+                                          useFlashAttention,
+                                          selectedType,
+                                          selectedSchedule);
+                                      final initResult =
+                                          await StableDiffusionService
+                                              .pickAndInitializeModel();
+                                      setState(() {
+                                        _message = initResult;
+                                        _taesdError = '';
+                                      });
+                                    }
+                                  },
+                            child: snapshot.data == true
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                        color: Colors.white))
+                                : const Text('Initialize Model'),
+                          );
+                        }),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -373,32 +403,45 @@ class _MyAppState extends State<MyApp> {
                     setState(() => _seed = int.tryParse(value) ?? -1),
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () async {
-                  setState(() => _message = 'Generating image...');
-                  final image = await StableDiffusionService.generateImage(
-                    prompt: _promptController.text,
-                    negativePrompt: _negativePromptController.text,
-                    cfgScale: _cfgScale,
-                    sampleSteps: _steps,
-                    width: _width,
-                    height: _height,
-                    seed: _seed,
-                    sampleMethod: _selectedSampleMethod.index,
-                  );
+              StreamBuilder<bool>(
+                  stream: StableDiffusionService.loadingStream,
+                  builder: (context, snapshot) {
+                    return ElevatedButton(
+                      onPressed: snapshot.data == true
+                          ? null
+                          : () async {
+                              setState(() => _message = 'Generating image...');
+                              final image =
+                                  await StableDiffusionService.generateImage(
+                                prompt: _promptController.text,
+                                negativePrompt: _negativePromptController.text,
+                                cfgScale: _cfgScale,
+                                sampleSteps: _steps,
+                                width: _width,
+                                height: _height,
+                                seed: _seed,
+                                sampleMethod: _selectedSampleMethod.index,
+                              );
 
-                  if (image != null) {
-                    final bytes =
-                        await image.toByteData(format: ui.ImageByteFormat.png);
-                    setState(() {
-                      _generatedImage =
-                          Image.memory(bytes!.buffer.asUint8List());
-                      _message = 'Generation complete';
-                    });
-                  }
-                },
-                child: const Text('Generate Image'),
-              ),
+                              if (image != null) {
+                                final bytes = await image.toByteData(
+                                    format: ui.ImageByteFormat.png);
+                                setState(() {
+                                  _generatedImage =
+                                      Image.memory(bytes!.buffer.asUint8List());
+                                  _message = 'Generation complete';
+                                });
+                              }
+                            },
+                      child: snapshot.data == true
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  color: Colors.white))
+                          : const Text('Generate Image'),
+                    );
+                  }),
               if (_generatedImage != null) ...[
                 const SizedBox(height: 20),
                 _generatedImage!,

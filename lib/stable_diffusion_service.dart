@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:isolate';
 import 'ffi_bindings.dart';
 import 'sd_image.dart';
 
@@ -32,6 +33,69 @@ class BufferPool {
   }
 }
 
+class IsolateMessage {
+  final String type;
+  final dynamic data;
+
+  IsolateMessage(this.type, this.data);
+}
+
+class IsolateData {
+  final SendPort sendPort;
+  final String modelPath;
+  final String? loraPath;
+  final String? taesdPath;
+  final bool useFlashAttention;
+  final bool useTinyAutoencoder;
+  final SDType modelType;
+  final Schedule schedule;
+  final int numCores;
+
+  IsolateData({
+    required this.sendPort,
+    required this.modelPath,
+    this.loraPath,
+    this.taesdPath,
+    required this.useFlashAttention,
+    required this.useTinyAutoencoder,
+    required this.modelType,
+    required this.schedule,
+    required this.numCores,
+  });
+}
+
+class GenerationData {
+  final SendPort sendPort;
+  final Pointer<Void> ctx;
+  final String prompt;
+  final String negativePrompt;
+  final int clipSkip;
+  final double cfgScale;
+  final double guidance;
+  final int width;
+  final int height;
+  final int sampleMethod;
+  final int sampleSteps;
+  final int seed;
+  final int batchCount;
+
+  GenerationData({
+    required this.sendPort,
+    required this.ctx,
+    required this.prompt,
+    required this.negativePrompt,
+    required this.clipSkip,
+    required this.cfgScale,
+    required this.guidance,
+    required this.width,
+    required this.height,
+    required this.sampleMethod,
+    required this.sampleSteps,
+    required this.seed,
+    required this.batchCount,
+  });
+}
+
 class StableDiffusionService {
   static String? modelPath;
   static String? loraPath;
@@ -40,12 +104,14 @@ class StableDiffusionService {
   static final _progressController =
       StreamController<ProgressUpdate>.broadcast();
   static final _logController = StreamController<LogMessage>.broadcast();
-  static bool _isInitialized = false;
   static bool _useFlashAttention = false;
   static bool _useTinyAutoencoder = false;
   static SDType _modelType = SDType.NONE;
   static Schedule _schedule = Schedule.DISCRETE;
   static late int _numCores;
+  static SendPort? _currentSendPort;
+  static final _loadingController = StreamController<bool>.broadcast();
+  static Stream<bool> get loadingStream => _loadingController.stream;
 
   static Stream<ProgressUpdate> get progressStream =>
       _progressController.stream;
@@ -54,7 +120,7 @@ class StableDiffusionService {
   static void setModelConfig(
       bool useFlashAttention, SDType modelType, Schedule schedule) {
     developer.log(
-        "Setting config - Flash: $useFlashAttention, Type: ${modelType}, Schedule: ${schedule}");
+        "Setting config - Flash: $useFlashAttention, Type: $modelType, Schedule: $schedule");
     _useFlashAttention = useFlashAttention;
     _modelType = modelType;
     _schedule = schedule;
@@ -71,33 +137,46 @@ class StableDiffusionService {
     return true;
   }
 
-  static void _logCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
+  static void _handleIsolateMessage(IsolateMessage message) {
+    switch (message.type) {
+      case 'log':
+        final logData = message.data as (int, String);
+        _logController.add(LogMessage(logData.$1, logData.$2));
+        developer.log(logData.$2);
+        break;
+      case 'progress':
+        final progressData = message.data as (int, int, double);
+        final update =
+            ProgressUpdate(progressData.$1, progressData.$2, progressData.$3);
+        _progressController.add(update);
+        developer.log(
+            'Progress: ${(update.progress * 100).toInt()}% (Step ${progressData.$1}/${progressData.$2}, ${progressData.$3.toStringAsFixed(1)}s)');
+        break;
+    }
+  }
+
+  static void _isolateLogCallback(
+      int level, Pointer<Utf8> text, Pointer<Void> data, SendPort sendPort) {
     final message = text.toDartString();
-    _logController.add(LogMessage(level, message));
-    developer.log(message);
+    sendPort.send(IsolateMessage('log', (level, message)));
   }
 
-  static void _progressCallback(
-      int step, int steps, double time, Pointer<Void> data) {
-    final update = ProgressUpdate(step, steps, time);
-    _progressController.add(update);
-    developer.log(
-        'Progress: ${(update.progress * 100).toInt()}% (Step $step/$steps, ${time.toStringAsFixed(1)}s)');
+  static void _isolateProgressCallback(
+      int step, int steps, double time, Pointer<Void> data, SendPort sendPort) {
+    sendPort.send(IsolateMessage('progress', (step, steps, time)));
   }
 
-  static void _initializeOnce() {
-    if (!_isInitialized) {
-      _numCores = getCores();
-      developer.log("Initializing with $_numCores cores for computation");
+  static void _staticLogCallback(
+      int level, Pointer<Utf8> text, Pointer<Void> ptr) {
+    if (_currentSendPort != null) {
+      _isolateLogCallback(level, text, ptr, _currentSendPort!);
+    }
+  }
 
-      final logCallbackPointer =
-          Pointer.fromFunction<LogCallbackNative>(_logCallback);
-      final progressCallbackPointer =
-          Pointer.fromFunction<ProgressCallbackNative>(_progressCallback);
-
-      FFIBindings.setLogCallback(logCallbackPointer, nullptr);
-      FFIBindings.setProgressCallback(progressCallbackPointer, nullptr);
-      _isInitialized = true;
+  static void _staticProgressCallback(
+      int step, int steps, double time, Pointer<Void> ptr) {
+    if (_currentSendPort != null) {
+      _isolateProgressCallback(step, steps, time, ptr, _currentSendPort!);
     }
   }
 
@@ -177,19 +256,66 @@ class StableDiffusionService {
     }
   }
 
-  static String initializeModel() {
+  static Future<String> initializeModel() async {
     if (modelPath == null || modelPath!.isEmpty) {
       return "Model path not set";
     }
 
-    _initializeOnce();
+    _loadingController.add(true);
+    _numCores = getCores();
+    developer.log("Initializing with $_numCores cores for computation");
 
     if (_ctx != null) {
       freeCurrentModel();
     }
 
+    final completer = Completer<String>();
+    final receivePort = ReceivePort();
+
+    final isolateData = IsolateData(
+      sendPort: receivePort.sendPort,
+      modelPath: modelPath!,
+      loraPath: loraPath,
+      taesdPath: taesdPath,
+      useFlashAttention: _useFlashAttention,
+      useTinyAutoencoder: _useTinyAutoencoder,
+      modelType: _modelType,
+      schedule: _schedule,
+      numCores: _numCores,
+    );
+
+    receivePort.listen((message) {
+      if (message is IsolateMessage) {
+        _handleIsolateMessage(message);
+      } else if (message is Pointer<Void>) {
+        _ctx = message;
+        completer.complete(
+            "Model initialized successfully: ${modelPath!.split('/').last}");
+      } else if (message is String) {
+        completer.complete(message);
+      }
+    });
+
+    await Isolate.spawn(_initializeModelIsolate, isolateData);
+
+    final result = await completer.future;
+    _loadingController.add(false);
+    return result;
+  }
+
+  static void _initializeModelIsolate(IsolateData data) {
+    _currentSendPort = data.sendPort;
+
+    final logCallbackPointer =
+        Pointer.fromFunction<LogCallbackNative>(_staticLogCallback);
+    final progressCallbackPointer =
+        Pointer.fromFunction<ProgressCallbackNative>(_staticProgressCallback);
+
+    FFIBindings.setLogCallback(logCallbackPointer, nullptr);
+    FFIBindings.setProgressCallback(progressCallbackPointer, nullptr);
+
     int mappedTypeIndex;
-    switch (_modelType) {
+    switch (data.modelType) {
       case SDType.NONE:
         mappedTypeIndex = 34;
         break;
@@ -230,19 +356,19 @@ class StableDiffusionService {
         mappedTypeIndex = 10;
         break;
       default:
-        mappedTypeIndex = _modelType.index;
+        mappedTypeIndex = data.modelType.index;
     }
 
-    final modelPathPtr = modelPath!.toNativeUtf8();
-    final emptyPtr = BufferPool.getStringBuffer('empty', "");
+    final modelPathPtr = data.modelPath.toNativeUtf8();
+    final emptyPtr = "".toNativeUtf8();
     final loraDirPtr =
         "/data/user/0/com.example.sd_test_app/cache/file_picker".toNativeUtf8();
-    final taesdPathPtr = (_useTinyAutoencoder && taesdPath != null)
-        ? taesdPath!.toNativeUtf8()
+    final taesdPathPtr = (data.useTinyAutoencoder && data.taesdPath != null)
+        ? data.taesdPath!.toNativeUtf8()
         : emptyPtr;
 
     try {
-      _ctx = FFIBindings.newSdCtx(
+      final ctx = FFIBindings.newSdCtx(
           modelPathPtr,
           emptyPtr,
           emptyPtr,
@@ -254,29 +380,29 @@ class StableDiffusionService {
           loraDirPtr,
           emptyPtr,
           emptyPtr,
-          _useFlashAttention,
+          data.useFlashAttention,
           false,
           false,
-          _numCores,
+          data.numCores,
           mappedTypeIndex,
           0,
-          _schedule.index,
+          data.schedule.index,
           false,
           false,
           false);
 
-      if (_ctx!.address == 0) {
-        return "Failed to initialize model";
-      }
-      return "Model initialized successfully: ${modelPath!.split('/').last}";
+      data.sendPort.send(ctx);
+    } catch (e) {
+      data.sendPort.send("Failed to initialize model: $e");
     } finally {
       calloc.free(modelPathPtr);
       calloc.free(loraDirPtr);
-      if (_useTinyAutoencoder &&
-          taesdPath != null &&
+      if (data.useTinyAutoencoder &&
+          data.taesdPath != null &&
           taesdPathPtr != emptyPtr) {
         calloc.free(taesdPathPtr);
       }
+      calloc.free(emptyPtr);
     }
   }
 
@@ -295,56 +421,115 @@ class StableDiffusionService {
   }) async {
     if (_ctx == null) return null;
 
-    final promptPtr = prompt.toNativeUtf8();
-    final negPromptPtr = negativePrompt.toNativeUtf8();
-    final emptyPtr = BufferPool.getStringBuffer('empty', "");
+    _loadingController.add(true);
+    final completer = Completer<ui.Image?>();
+    final receivePort = ReceivePort();
+    Isolate? isolate;
+
+    final generationData = GenerationData(
+      sendPort: receivePort.sendPort,
+      ctx: _ctx!,
+      prompt: prompt,
+      negativePrompt: negativePrompt,
+      clipSkip: clipSkip,
+      cfgScale: cfgScale,
+      guidance: guidance,
+      width: width,
+      height: height,
+      sampleMethod: sampleMethod,
+      sampleSteps: sampleSteps,
+      seed: seed,
+      batchCount: batchCount,
+    );
+
+    receivePort.listen((message) async {
+      if (message is IsolateMessage) {
+        _handleIsolateMessage(message);
+      } else if (message is Uint8List) {
+        final completer2 = Completer<ui.Image>();
+        ui.decodeImageFromPixels(
+          message,
+          width,
+          height,
+          ui.PixelFormat.rgba8888,
+          completer2.complete,
+        );
+        final image = await completer2.future;
+        completer.complete(image);
+      } else {
+        completer.complete(null);
+      }
+    });
+
+    isolate = await Isolate.spawn(_generateImageIsolate, generationData);
+
+    try {
+      final result = await completer.future;
+      isolate.kill();
+      receivePort.close();
+      return result;
+    } finally {
+      _loadingController.add(false);
+    }
+  }
+
+  static void _generateImageIsolate(GenerationData data) {
+    _currentSendPort = data.sendPort;
+
+    final logCallbackPointer =
+        Pointer.fromFunction<LogCallbackNative>(_staticLogCallback);
+    final progressCallbackPointer =
+        Pointer.fromFunction<ProgressCallbackNative>(_staticProgressCallback);
+
+    FFIBindings.setLogCallback(logCallbackPointer, nullptr);
+    FFIBindings.setProgressCallback(progressCallbackPointer, nullptr);
+
+    final promptPtr = data.prompt.toNativeUtf8();
+    final negPromptPtr = data.negativePrompt.toNativeUtf8();
+    final emptyPtr = "".toNativeUtf8();
 
     try {
       final result = FFIBindings.txt2img(
-          _ctx!,
+          data.ctx,
           promptPtr,
           negPromptPtr,
-          clipSkip,
-          cfgScale,
-          guidance,
-          width,
-          height,
-          sampleMethod,
-          sampleSteps,
-          seed,
-          batchCount,
+          data.clipSkip,
+          data.cfgScale,
+          data.guidance,
+          data.width,
+          data.height,
+          data.sampleMethod,
+          data.sampleSteps,
+          data.seed,
+          data.batchCount,
           nullptr,
           1.0,
           1.0,
           false,
           emptyPtr);
 
-      if (result.address == 0) return null;
+      if (result.address == 0) {
+        data.sendPort.send(null);
+        return;
+      }
 
       final image = result.cast<SDImage>().ref;
-      final bytes = image.data.asTypedList(width * height * image.channel);
+      final bytes =
+          image.data.asTypedList(data.width * data.height * image.channel);
 
-      final rgbaBytes = BufferPool.getRgbaBuffer(width * height * 4);
-      for (var i = 0; i < width * height; i++) {
+      final rgbaBytes = Uint8List(data.width * data.height * 4);
+      for (var i = 0; i < data.width * data.height; i++) {
         rgbaBytes[i * 4] = bytes[i * 3];
         rgbaBytes[i * 4 + 1] = bytes[i * 3 + 1];
         rgbaBytes[i * 4 + 2] = bytes[i * 3 + 2];
         rgbaBytes[i * 4 + 3] = 255;
       }
 
-      final completer = Completer<ui.Image>();
-      ui.decodeImageFromPixels(
-        rgbaBytes,
-        width,
-        height,
-        ui.PixelFormat.rgba8888,
-        completer.complete,
-      );
-
-      return completer.future;
+      data.sendPort.send(rgbaBytes);
     } finally {
       calloc.free(promptPtr);
       calloc.free(negPromptPtr);
+      calloc.free(emptyPtr);
     }
   }
 
@@ -358,7 +543,6 @@ class StableDiffusionService {
     BufferPool.dispose();
     _progressController.close();
     _logController.close();
-    _isInitialized = false;
   }
 }
 
