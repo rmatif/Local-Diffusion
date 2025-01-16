@@ -23,7 +23,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.example.sd_test_app"
+    namespace "com.example.local_diffusion"
     compileSdkVersion flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion
 

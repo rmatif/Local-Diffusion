@@ -4,6 +4,8 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'stable_diffusion_service.dart';
 import 'ffi_bindings.dart';
+import 'stable_diffusion_processor.dart';
+import 'package:file_picker/file_picker.dart';
 
 void main() {
   runApp(const MaterialApp(
@@ -23,6 +25,7 @@ class _MyAppState extends State<MyApp> {
   final TextEditingController _negativePromptController =
       TextEditingController();
   Timer? _errorMessageTimer;
+  StableDiffusionProcessor? _processor;
 
   String _message = '';
   String _loraMessage = '';
@@ -42,46 +45,8 @@ class _MyAppState extends State<MyApp> {
   SDType selectedType = SDType.NONE;
   SampleMethod _selectedSampleMethod = SampleMethod.EULER_A;
   Schedule _selectedSchedule = Schedule.DISCRETE;
-
-  StreamSubscription? _logSubscription;
-  StreamSubscription? _progressSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _cores = StableDiffusionService.getCores();
-    _setupSubscriptions();
-  }
-
-  void _setupSubscriptions() {
-    _logSubscription = StableDiffusionService.logStream.listen((logMessage) {
-      if (logMessage.message.contains('total params memory size')) {
-        final regex = RegExp(r'total params memory size = ([\d.]+)MB');
-        final match = regex.firstMatch(logMessage.message);
-        if (match != null) {
-          setState(() {
-            _ramUsage = 'Total RAM Usage: ${match.group(1)}MB';
-          });
-        }
-      } else if (logMessage.message.contains('completed in')) {
-        final regex = RegExp(r'completed in ([\d.]+)s');
-        final match = regex.firstMatch(logMessage.message);
-        if (match != null) {
-          setState(() {
-            _totalTime = 'Generation completed in ${match.group(1)}s';
-          });
-        }
-      }
-    });
-
-    _progressSubscription =
-        StableDiffusionService.progressStream.listen((progress) {
-      setState(() {
-        _progressMessage =
-            'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)';
-      });
-    });
-  }
+  String? _taesdPath;
+  String? _loraPath;
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -96,13 +61,66 @@ class _MyAppState extends State<MyApp> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _cores = FFIBindings.getCores() * 2;
+  }
+
+  @override
   void dispose() {
     _promptController.dispose();
     _negativePromptController.dispose();
     _errorMessageTimer?.cancel();
-    _logSubscription?.cancel();
-    _progressSubscription?.cancel();
+    _processor?.dispose();
     super.dispose();
+  }
+
+  void _initializeProcessor(String modelPath, bool useFlashAttention,
+      SDType modelType, Schedule schedule) {
+    _processor?.dispose();
+    _processor = StableDiffusionProcessor(
+      modelPath: modelPath,
+      useFlashAttention: useFlashAttention,
+      modelType: modelType,
+      schedule: schedule,
+      loraPath: _loraPath,
+      taesdPath: _taesdPath,
+      useTinyAutoencoder: _useTinyAutoencoder,
+      onModelLoaded: () {
+        setState(() {
+          _message = 'Model initialized successfully';
+        });
+      },
+      onLog: (log) {
+        if (log.message.contains('total params memory size')) {
+          final regex = RegExp(r'total params memory size = ([\d.]+)MB');
+          final match = regex.firstMatch(log.message);
+          if (match != null) {
+            setState(() {
+              _ramUsage = 'Total RAM Usage: ${match.group(1)}MB';
+            });
+          }
+        }
+        developer.log(log.message);
+      },
+      onProgress: (progress) {
+        setState(() {
+          _progressMessage =
+              'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)';
+        });
+        developer.log(
+            'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)');
+      },
+    );
+
+    _processor!.imageStream.listen((image) {
+      image.toByteData(format: ui.ImageByteFormat.png).then((bytes) {
+        setState(() {
+          _generatedImage = Image.memory(bytes!.buffer.asUint8List());
+          _message = 'Generation complete';
+        });
+      });
+    });
   }
 
   @override
@@ -131,151 +149,125 @@ class _MyAppState extends State<MyApp> {
               Row(
                 children: [
                   Expanded(
-                    child: StreamBuilder<bool>(
-                        stream: StableDiffusionService.loadingStream,
-                        builder: (context, snapshot) {
-                          return ElevatedButton(
-                            onPressed: snapshot.data == true
-                                ? null
-                                : () async {
-                                    if (StableDiffusionService
-                                        .isModelLoaded()) {
-                                      StableDiffusionService.freeCurrentModel();
-                                    }
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        if (_processor != null) {
+                          _processor!.dispose();
+                          _processor = null;
+                        }
+                        final result =
+                            await showDialog<(bool, SDType, Schedule)>(
+                          context: context,
+                          builder: (BuildContext context) {
+                            Schedule dialogSchedule = Schedule.DISCRETE;
+                            SDType dialogType = SDType.NONE;
 
-                                    final result = await showDialog<
-                                        (bool, SDType, Schedule)>(
-                                      context: context,
-                                      builder: (BuildContext context) {
-                                        Schedule dialogSchedule =
-                                            Schedule.DISCRETE;
-                                        SDType dialogType = SDType.NONE;
-
-                                        return StatefulBuilder(
-                                          builder: (context, setState) {
-                                            return AlertDialog(
-                                              title: const Text(
-                                                  'Model Initialization Options'),
-                                              content: Column(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const Text('Model Type'),
-                                                  DropdownButton<SDType>(
-                                                    value: dialogType,
-                                                    isExpanded: true,
-                                                    items: SDType.values
-                                                        .map((SDType type) {
-                                                      return DropdownMenuItem<
-                                                          SDType>(
-                                                        value: type,
-                                                        child: Text(
-                                                            type.displayName),
-                                                      );
-                                                    }).toList(),
-                                                    onChanged:
-                                                        (SDType? newValue) {
-                                                      if (newValue != null) {
-                                                        setState(() {
-                                                          dialogType = newValue;
-                                                        });
-                                                      }
-                                                    },
-                                                  ),
-                                                  const SizedBox(height: 10),
-                                                  const Text('Schedule'),
-                                                  DropdownButton<Schedule>(
-                                                    value: dialogSchedule,
-                                                    isExpanded: true,
-                                                    items: Schedule.values
-                                                        .map((schedule) {
-                                                      return DropdownMenuItem<
-                                                          Schedule>(
-                                                        value: schedule,
-                                                        child: Text(schedule
-                                                            .displayName),
-                                                      );
-                                                    }).toList(),
-                                                    onChanged:
-                                                        (Schedule? newValue) {
-                                                      setState(() {
-                                                        dialogSchedule =
-                                                            newValue!;
-                                                      });
-                                                    },
-                                                  ),
-                                                ],
-                                              ),
-                                              actions: <Widget>[
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.pop(context),
-                                                  child: const Text('Cancel'),
-                                                ),
-                                                TextButton(
-                                                  onPressed: () {
-                                                    Navigator.pop(context, (
-                                                      false,
-                                                      dialogType,
-                                                      dialogSchedule
-                                                    ));
-                                                  },
-                                                  child: const Text(
-                                                      'Without Flash Attention'),
-                                                ),
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.pop(context, (
-                                                    true,
-                                                    dialogType,
-                                                    dialogSchedule
-                                                  )),
-                                                  child: const Text(
-                                                      'With Flash Attention'),
-                                                ),
-                                              ],
-                                            );
-                                          },
-                                        );
+                            return StatefulBuilder(
+                              builder: (context, setState) {
+                                return AlertDialog(
+                                  title: const Text(
+                                      'Model Initialization Options'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Text('Model Type'),
+                                      DropdownButton<SDType>(
+                                        value: dialogType,
+                                        isExpanded: true,
+                                        items: SDType.values.map((SDType type) {
+                                          return DropdownMenuItem<SDType>(
+                                            value: type,
+                                            child: Text(type.displayName),
+                                          );
+                                        }).toList(),
+                                        onChanged: (SDType? newValue) {
+                                          if (newValue != null) {
+                                            setState(() {
+                                              dialogType = newValue;
+                                            });
+                                          }
+                                        },
+                                      ),
+                                      const SizedBox(height: 10),
+                                      const Text('Schedule'),
+                                      DropdownButton<Schedule>(
+                                        value: dialogSchedule,
+                                        isExpanded: true,
+                                        items: Schedule.values.map((schedule) {
+                                          return DropdownMenuItem<Schedule>(
+                                            value: schedule,
+                                            child: Text(schedule.displayName),
+                                          );
+                                        }).toList(),
+                                        onChanged: (Schedule? newValue) {
+                                          setState(() {
+                                            dialogSchedule = newValue!;
+                                          });
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  actions: <Widget>[
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(context, (
+                                          false,
+                                          dialogType,
+                                          dialogSchedule
+                                        ));
                                       },
-                                    );
-                                    if (result != null) {
-                                      final (
-                                        useFlashAttention,
-                                        selectedType,
-                                        selectedSchedule
-                                      ) = result;
-                                      StableDiffusionService.setModelConfig(
-                                          useFlashAttention,
-                                          selectedType,
-                                          selectedSchedule);
-                                      final initResult =
-                                          await StableDiffusionService
-                                              .pickAndInitializeModel();
-                                      setState(() {
-                                        _message = initResult;
-                                        _taesdError = '';
-                                      });
-                                    }
-                                  },
-                            child: snapshot.data == true
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        color: Colors.white))
-                                : const Text('Initialize Model'),
-                          );
-                        }),
+                                      child:
+                                          const Text('Without Flash Attention'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context,
+                                          (true, dialogType, dialogSchedule)),
+                                      child: const Text('With Flash Attention'),
+                                    ),
+                                  ],
+                                );
+                              },
+                            );
+                          },
+                        );
+
+                        if (result != null) {
+                          final (
+                            useFlashAttention,
+                            selectedType,
+                            selectedSchedule
+                          ) = result;
+                          final pickedFile = await FilePicker.platform
+                              .pickFiles(
+                                  type: FileType.any, allowMultiple: false);
+
+                          if (pickedFile != null) {
+                            final modelPath = pickedFile.files.single.path!;
+                            _initializeProcessor(modelPath, useFlashAttention,
+                                selectedType, selectedSchedule);
+                          }
+                        }
+                      },
+                      child: const Text('Initialize Model'),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        final result = await StableDiffusionService
-                            .pickAndInitializeLora();
-                        setState(() {
-                          _loraMessage = result;
-                        });
+                        final result = await FilePicker.platform.pickFiles(
+                            type: FileType.any, allowMultiple: false);
+                        if (result != null) {
+                          setState(() {
+                            _loraPath = result.files.single.path!;
+                            _loraMessage =
+                                "LORA loaded: ${result.files.single.name}";
+                          });
+                        }
                       },
                       child: const Text('Load LORA'),
                     ),
@@ -291,17 +283,25 @@ class _MyAppState extends State<MyApp> {
                       Checkbox(
                         value: _useTinyAutoencoder,
                         onChanged: (bool? value) {
-                          if (StableDiffusionService.taesdPath == null) {
+                          if (_taesdPath == null) {
                             _showTemporaryError(
                                 'Please load TAESD model first');
                             return;
                           }
                           setState(() {
-                            if (StableDiffusionService.setTinyAutoencoder(
-                                value ?? false)) {
-                              _useTinyAutoencoder = value ?? false;
-                              StableDiffusionService.initializeModel();
-                              _taesdError = '';
+                            _useTinyAutoencoder = value ?? false;
+                            if (_processor != null) {
+                              String currentModelPath = _processor!.modelPath;
+                              bool currentFlashAttention =
+                                  _processor!.useFlashAttention;
+                              SDType currentModelType = _processor!.modelType;
+                              Schedule currentSchedule = _processor!.schedule;
+
+                              _initializeProcessor(
+                                  currentModelPath,
+                                  currentFlashAttention,
+                                  currentModelType,
+                                  currentSchedule);
                             }
                           });
                         },
@@ -310,12 +310,19 @@ class _MyAppState extends State<MyApp> {
                       const Spacer(),
                       ElevatedButton(
                         onPressed: () async {
-                          final result = await StableDiffusionService
-                              .pickAndInitializeTAESD();
-                          setState(() {
-                            _taesdMessage = result;
-                            _taesdError = '';
-                          });
+                          final result = await FilePicker.platform.pickFiles(
+                              type: FileType.any,
+                              allowMultiple: false,
+                              withData: false,
+                              withReadStream: true);
+                          if (result != null) {
+                            setState(() {
+                              _taesdPath = result.files.single.path!;
+                              _taesdMessage =
+                                  "TAESD loaded: ${result.files.single.name}";
+                              _taesdError = '';
+                            });
+                          }
                         },
                         child: const Text('Load TAESD'),
                       ),
@@ -337,14 +344,8 @@ class _MyAppState extends State<MyApp> {
                 ],
               ),
               const SizedBox(height: 20),
-              Text(
-                'Status: $_message',
-                style: const TextStyle(fontSize: 16),
-              ),
-              Text(
-                'LORA: $_loraMessage',
-                style: const TextStyle(fontSize: 16),
-              ),
+              Text('Status: $_message', style: const TextStyle(fontSize: 16)),
+              Text('LORA: $_loraMessage', style: const TextStyle(fontSize: 16)),
               const SizedBox(height: 20),
               TextField(
                 controller: _promptController,
@@ -457,49 +458,27 @@ class _MyAppState extends State<MyApp> {
                   style: const TextStyle(fontSize: 16),
                 ),
               const SizedBox(height: 20),
-              StreamBuilder<bool>(
-                  stream: StableDiffusionService.loadingStream,
-                  builder: (context, snapshot) {
-                    return ElevatedButton(
-                      onPressed: snapshot.data == true
-                          ? null
-                          : () async {
-                              setState(() {
-                                _message = 'Generating image...';
-                                _progressMessage = '';
-                                _totalTime = '';
-                              });
-                              final image =
-                                  await StableDiffusionService.generateImage(
-                                prompt: _promptController.text,
-                                negativePrompt: _negativePromptController.text,
-                                cfgScale: _cfgScale,
-                                sampleSteps: _steps,
-                                width: _width,
-                                height: _height,
-                                seed: _seed,
-                                sampleMethod: _selectedSampleMethod.index,
-                              );
-
-                              if (image != null) {
-                                final bytes = await image.toByteData(
-                                    format: ui.ImageByteFormat.png);
-                                setState(() {
-                                  _generatedImage =
-                                      Image.memory(bytes!.buffer.asUint8List());
-                                  _message = 'Generation complete';
-                                });
-                              }
-                            },
-                      child: snapshot.data == true
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white))
-                          : const Text('Generate Image'),
+              ElevatedButton(
+                onPressed: () {
+                  if (_processor != null) {
+                    print("Sending generation request to processor");
+                    setState(() => _message = 'Generating image...');
+                    _processor!.generateImage(
+                      prompt: _promptController.text,
+                      negativePrompt: _negativePromptController.text,
+                      cfgScale: _cfgScale,
+                      sampleSteps: _steps,
+                      width: _width,
+                      height: _height,
+                      seed: _seed,
+                      sampleMethod: _selectedSampleMethod.index,
                     );
-                  }),
+                  } else {
+                    print("Processor is null!");
+                  }
+                },
+                child: const Text('Generate Image'),
+              ),
               if (_generatedImage != null) ...[
                 const SizedBox(height: 20),
                 _generatedImage!,

@@ -1,0 +1,5 @@
+{
+    "cody.autocomplete.languages": {
+        "*": true
+    }
+}

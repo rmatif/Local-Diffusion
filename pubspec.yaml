@@ -1,5 +1,5 @@
-name: sd_test_app
-description: "A new Flutter project."
+name: local_diffusion
+description: "Local Diffusion - Stable Diffusion on device"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -30,14 +30,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  ffi: ^2.1.0
-  file_picker: ^5.0.0
+  ffi: ^2.1.3
+  file_picker: ^8.1.4
+  path_provider: ^2.1.5
   logging: ^1.2.0
-
+  permission_handler: ^11.3.1
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.2
-
+  flutter_launcher_icons: ^0.13.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -90,3 +91,10 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/custom-fonts/#from-packages
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "#00020b" 
+  adaptive_icon_foreground: "assets/icon/icon.png"
+  adaptive_icon_mask: true
