@@ -113,12 +113,26 @@ class _MyAppState extends State<MyApp> {
       },
     );
 
-    _processor!.imageStream.listen((image) {
-      image.toByteData(format: ui.ImageByteFormat.png).then((bytes) {
-        setState(() {
-          _generatedImage = Image.memory(bytes!.buffer.asUint8List());
-          _message = 'Generation complete';
-        });
+    _processor!.imageStream.listen((image) async {
+      // Convert ui.Image to bytes using toByteData
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      setState(() {
+        _generatedImage = Image.memory(bytes!.buffer.asUint8List());
+        _message = 'Generation complete';
+      });
+
+      // Save the image
+      final saveResult = await _processor!.saveGeneratedImage(
+        image,
+        _promptController.text,
+        _width,
+        _height,
+        _selectedSampleMethod,
+      );
+
+      setState(() {
+        _message = saveResult;
       });
     });
   }

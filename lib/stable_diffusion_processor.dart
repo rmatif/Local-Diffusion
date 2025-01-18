@@ -4,7 +4,8 @@ import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
-
+import 'package:gal/gal.dart';
+import 'utils.dart';
 import 'ffi_bindings.dart';
 import 'stable_diffusion_service.dart';
 import 'sd_image.dart';
@@ -343,6 +344,10 @@ class StableDiffusionProcessor {
     _loadingController.add(true);
     try {
       await _uninitialized.future;
+
+      // Add delay between generations to allow memory cleanup
+      await Future.delayed(const Duration(milliseconds: 500));
+
       _sdSendPort.send({
         'command': 'generate',
         'prompt': prompt,
@@ -359,6 +364,22 @@ class StableDiffusionProcessor {
       });
     } finally {
       _loadingController.add(false);
+    }
+  }
+
+  Future<String> saveGeneratedImage(ui.Image image, String prompt, int width,
+      int height, SampleMethod sampleMethod) async {
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (bytes == null) return 'Failed to encode image';
+
+    final fileName =
+        '${sanitizePrompt(prompt)}_${width}x${height}_${sampleMethod.displayName}_${generateRandomSequence(5)}';
+
+    try {
+      await Gal.putImageBytes(bytes.buffer.asUint8List(), name: fileName);
+      return 'Image saved as $fileName';
+    } catch (e) {
+      return 'Failed to save image: $e';
     }
   }
 
