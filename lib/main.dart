@@ -273,13 +273,13 @@ class _MyAppState extends State<MyApp> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        final result = await FilePicker.platform.pickFiles(
-                            type: FileType.any, allowMultiple: false);
+                        final result =
+                            await FilePicker.platform.getDirectoryPath();
                         if (result != null) {
                           setState(() {
-                            _loraPath = result.files.single.path!;
+                            _loraPath = result;
                             _loraMessage =
-                                "LORA loaded: ${result.files.single.name}";
+                                "LORA directory loaded: ${result.split('/').last}";
                           });
                         }
                       },
