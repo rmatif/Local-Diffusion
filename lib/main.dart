@@ -280,6 +280,19 @@ class _MyAppState extends State<MyApp> {
                             _loraPath = result;
                             _loraMessage =
                                 "LORA directory loaded: ${result.split('/').last}";
+                            if (_processor != null) {
+                              String currentModelPath = _processor!.modelPath;
+                              bool currentFlashAttention =
+                                  _processor!.useFlashAttention;
+                              SDType currentModelType = _processor!.modelType;
+                              Schedule currentSchedule = _processor!.schedule;
+
+                              _initializeProcessor(
+                                  currentModelPath,
+                                  currentFlashAttention,
+                                  currentModelType,
+                                  currentSchedule);
+                            }
                           });
                         }
                       },

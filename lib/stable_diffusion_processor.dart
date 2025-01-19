@@ -204,9 +204,11 @@ class StableDiffusionProcessor {
               final modelPathUtf8 =
                   message['modelPath'].toString().toNativeUtf8();
               final emptyUtf8 = "".toNativeUtf8();
-              final loraDirUtf8 = message['loraPath'] != null
+              final loraDirUtf8 = message['loraPath'] != null &&
+                      message['loraPath'].toString().isNotEmpty
                   ? message['loraPath'].toString().toNativeUtf8()
-                  : emptyUtf8;
+                  : "/"
+                      .toNativeUtf8(); // Provide a valid default path instead of empty string
               final taesdPathUtf8 = (message['useTinyAutoencoder'] &&
                       message['taesdPath'] != null)
                   ? message['taesdPath'].toString().toNativeUtf8()
