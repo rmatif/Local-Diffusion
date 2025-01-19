@@ -40,6 +40,7 @@ class StableDiffusionService {
       StreamController<ProgressUpdate>.broadcast();
   static final _logController = StreamController<LogMessage>.broadcast();
   static bool _useTinyAutoencoder = false;
+  static int? lastUsedSeed;
 
   static Stream<ProgressUpdate> get progressStream =>
       _progressController.stream;

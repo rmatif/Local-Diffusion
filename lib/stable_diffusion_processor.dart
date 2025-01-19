@@ -14,7 +14,21 @@ SendPort? _globalSendPort;
 
 void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
   final message = text.toDartString();
-  print("SD Log: $message");
+
+  if (message.contains("generating image")) {
+    final seedMatch = RegExp(r'seed (\d+)').firstMatch(message);
+    if (seedMatch != null) {
+      final extractedSeed = int.parse(seedMatch.group(1)!);
+      _globalSendPort?.send({
+        'type': 'log',
+        'level': level,
+        'message': message,
+        'seed': extractedSeed
+      });
+      return;
+    }
+  }
+
   _globalSendPort?.send({
     'type': 'log',
     'level': level,
@@ -132,6 +146,9 @@ class StableDiffusionProcessor {
             _uninitialized.complete();
             if (onModelLoaded != null) onModelLoaded!();
           } else if (message['type'] == 'log') {
+            if (message.containsKey('seed')) {
+              StableDiffusionService.lastUsedSeed = message['seed'];
+            }
             if (onLog != null) {
               onLog!(LogMessage(message['level'], message['message']));
             }
@@ -372,8 +389,17 @@ class StableDiffusionProcessor {
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     if (bytes == null) return 'Failed to encode image';
 
+    print(
+        "Current seed value: ${StableDiffusionService.lastUsedSeed}"); // Debug print
+
+    final seedString = StableDiffusionService.lastUsedSeed != null
+        ? '_seed${StableDiffusionService.lastUsedSeed}'
+        : '';
+
+    print("Seed string: $seedString"); // Debug print
+
     final fileName =
-        '${sanitizePrompt(prompt)}_${width}x${height}_${sampleMethod.displayName}_${generateRandomSequence(5)}';
+        '${sanitizePrompt(prompt)}_${width}x${height}_${sampleMethod.displayName}${seedString}_${generateRandomSequence(5)}';
 
     try {
       await Gal.putImageBytes(bytes.buffer.asUint8List(), name: fileName);
