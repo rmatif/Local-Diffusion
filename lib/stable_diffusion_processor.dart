@@ -12,6 +12,9 @@ import 'sd_image.dart';
 
 SendPort? _globalSendPort;
 
+late final Pointer<NativeFunction<LogCallbackNative>> _logCallbackPtr;
+late final Pointer<NativeFunction<ProgressCallbackNative>> _progressCallbackPtr;
+
 void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
   final message = text.toDartString();
 
@@ -182,6 +185,10 @@ class StableDiffusionProcessor {
   static void _isolateEntryPoint(Map<String, dynamic> args) {
     final SendPort mainSendPort = args['port'];
     _globalSendPort = mainSendPort;
+    _logCallbackPtr =
+        Pointer.fromFunction<LogCallbackNative>(_staticLogCallback);
+    _progressCallbackPtr =
+        Pointer.fromFunction<ProgressCallbackNative>(_staticProgressCallback);
     final ReceivePort isolateReceivePort = ReceivePort();
     mainSendPort.send(isolateReceivePort.sendPort);
 
@@ -194,11 +201,8 @@ class StableDiffusionProcessor {
         switch (message['command']) {
           case 'initialize':
             print("Initializing SD model...");
-            final logCallbackPointer =
-                Pointer.fromFunction<LogCallbackNative>(_staticLogCallback);
-            final progressCallbackPointer =
-                Pointer.fromFunction<ProgressCallbackNative>(
-                    _staticProgressCallback);
+            FFIBindings.setLogCallback(_logCallbackPtr, nullptr);
+            FFIBindings.setProgressCallback(_progressCallbackPtr, nullptr);
 
             try {
               final modelPathUtf8 =
@@ -214,8 +218,8 @@ class StableDiffusionProcessor {
                   ? message['taesdPath'].toString().toNativeUtf8()
                   : emptyUtf8;
 
-              FFIBindings.setLogCallback(logCallbackPointer, nullptr);
-              FFIBindings.setProgressCallback(progressCallbackPointer, nullptr);
+              FFIBindings.setLogCallback(_logCallbackPtr, nullptr);
+              FFIBindings.setProgressCallback(_progressCallbackPtr, nullptr);
 
               ctx = FFIBindings.newSdCtx(
                 modelPathUtf8,
@@ -321,6 +325,9 @@ class StableDiffusionProcessor {
                     'width': message['width'],
                     'height': message['height'],
                   });
+
+                  calloc.free(image.data);
+                  calloc.free(result.cast<Void>());
                 }
               } catch (e) {
                 print("Error generating image: $e");
