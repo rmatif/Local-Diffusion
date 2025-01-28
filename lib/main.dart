@@ -23,7 +23,9 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   bool _isModelInitializing = false;
   bool _isGeneratingImage = false;
-  bool get _isBusy => _isModelInitializing || _isGeneratingImage;
+  bool _waitForRamUsage = false;
+  bool get _isBusy =>
+      _isModelInitializing || _isGeneratingImage || _waitForRamUsage;
 
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _negativePromptController =
@@ -80,6 +82,12 @@ class _MyAppState extends State<MyApp> {
 
   void _initializeProcessor(String modelPath, bool useFlashAttention,
       SDType modelType, Schedule schedule) {
+    setState(() {
+      _isModelInitializing = true;
+      _waitForRamUsage = true;
+      _message = 'Initializing model...';
+    });
+
     _processor?.dispose();
     _processor = StableDiffusionProcessor(
       modelPath: modelPath,
@@ -91,7 +99,7 @@ class _MyAppState extends State<MyApp> {
       useTinyAutoencoder: _useTinyAutoencoder,
       onModelLoaded: () {
         setState(() {
-          _message = 'Model initialized successfully';
+          _message = 'Model initialized';
         });
       },
       onLog: (log) {
@@ -101,6 +109,9 @@ class _MyAppState extends State<MyApp> {
           if (match != null) {
             setState(() {
               _ramUsage = 'Total RAM Usage: ${match.group(1)}MB';
+              _waitForRamUsage = false;
+              _isModelInitializing = false;
+              _message = 'Model ready';
             });
           }
         }
@@ -111,8 +122,6 @@ class _MyAppState extends State<MyApp> {
           _progressMessage =
               'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)';
         });
-        developer.log(
-            'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)');
       },
     );
 
@@ -289,7 +298,7 @@ class _MyAppState extends State<MyApp> {
                               }
                             },
                       child: _isModelInitializing
-                          ? Row(
+                          ? const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 SizedBox(
@@ -301,8 +310,8 @@ class _MyAppState extends State<MyApp> {
                                         Colors.white),
                                   ),
                                 ),
-                                const SizedBox(width: 8),
-                                const Text('Initializing...'),
+                                SizedBox(width: 8),
+                                Text('Initializing...'),
                               ],
                             )
                           : const Text('Initialize Model'),
@@ -361,20 +370,23 @@ class _MyAppState extends State<MyApp> {
                           }
                           setState(() {
                             _useTinyAutoencoder = value ?? false;
-                            if (_processor != null) {
-                              String currentModelPath = _processor!.modelPath;
-                              bool currentFlashAttention =
-                                  _processor!.useFlashAttention;
-                              SDType currentModelType = _processor!.modelType;
-                              Schedule currentSchedule = _processor!.schedule;
-
-                              _initializeProcessor(
-                                  currentModelPath,
-                                  currentFlashAttention,
-                                  currentModelType,
-                                  currentSchedule);
-                            }
+                            _isModelInitializing = true;
+                            _waitForRamUsage = true;
                           });
+
+                          if (_processor != null) {
+                            _initializeProcessor(
+                              _processor!.modelPath,
+                              _processor!.useFlashAttention,
+                              _processor!.modelType,
+                              _processor!.schedule,
+                            );
+                          } else {
+                            setState(() {
+                              _waitForRamUsage = false;
+                              _isModelInitializing = false;
+                            });
+                          }
                         },
                       ),
                       const Text('Use Tiny AutoEncoder'),
@@ -383,19 +395,41 @@ class _MyAppState extends State<MyApp> {
                         onPressed: _isBusy
                             ? null
                             : () async {
-                                final result = await FilePicker.platform
-                                    .pickFiles(
-                                        type: FileType.any,
-                                        allowMultiple: false,
-                                        withData: false,
-                                        withReadStream: true);
-                                if (result != null) {
-                                  setState(() {
-                                    _taesdPath = result.files.single.path!;
-                                    _taesdMessage =
-                                        "TAESD loaded: ${result.files.single.name}";
-                                    _taesdError = '';
-                                  });
+                                setState(() {
+                                  _isModelInitializing = true;
+                                  _waitForRamUsage = true;
+                                });
+
+                                try {
+                                  final result = await FilePicker.platform
+                                      .pickFiles(
+                                          type: FileType.any,
+                                          allowMultiple: false);
+
+                                  if (result != null) {
+                                    setState(() {
+                                      _taesdPath = result.files.single.path!;
+                                      _taesdMessage =
+                                          "TAESD loaded: ${result.files.single.name}";
+                                      _taesdError = '';
+                                    });
+
+                                    if (_processor != null) {
+                                      _initializeProcessor(
+                                        _processor!.modelPath,
+                                        _processor!.useFlashAttention,
+                                        _processor!.modelType,
+                                        _processor!.schedule,
+                                      );
+                                    }
+                                  }
+                                } finally {
+                                  if (_processor == null) {
+                                    setState(() {
+                                      _waitForRamUsage = false;
+                                      _isModelInitializing = false;
+                                    });
+                                  }
                                 }
                               },
                         child: const Text('Load TAESD'),
@@ -556,7 +590,7 @@ class _MyAppState extends State<MyApp> {
                         }
                       },
                 child: _isGeneratingImage
-                    ? Row(
+                    ? const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           SizedBox(
@@ -568,8 +602,8 @@ class _MyAppState extends State<MyApp> {
                                   AlwaysStoppedAnimation<Color>(Colors.white),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          const Text('Generating...'),
+                          SizedBox(width: 8),
+                          Text('Generating...'),
                         ],
                       )
                     : const Text('Generate Image'),
