@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
@@ -21,12 +22,6 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  bool _isModelInitializing = false;
-  bool _isGeneratingImage = false;
-  bool _waitForRamUsage = false;
-  bool get _isBusy =>
-      _isModelInitializing || _isGeneratingImage || _waitForRamUsage;
-
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _negativePromptController =
       TextEditingController();
@@ -53,6 +48,20 @@ class _MyAppState extends State<MyApp> {
   Schedule _selectedSchedule = Schedule.DISCRETE;
   String? _taesdPath;
   String? _loraPath;
+
+  bool _isInitializingModel = false;
+  bool _isLoadingLora = false;
+  bool _isLoadingTaesd = false;
+  bool _isGeneratingImage = false;
+
+  Future<String> getModelDirectory() async {
+    final directory = Directory('/storage/emulated/0/Local Diffusion/Models');
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    return directory.path;
+  }
+
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
     setState(() {
@@ -83,11 +92,8 @@ class _MyAppState extends State<MyApp> {
   void _initializeProcessor(String modelPath, bool useFlashAttention,
       SDType modelType, Schedule schedule) {
     setState(() {
-      _isModelInitializing = true;
-      _waitForRamUsage = true;
-      _message = 'Initializing model...';
+      _isInitializingModel = true;
     });
-
     _processor?.dispose();
     _processor = StableDiffusionProcessor(
       modelPath: modelPath,
@@ -99,7 +105,8 @@ class _MyAppState extends State<MyApp> {
       useTinyAutoencoder: _useTinyAutoencoder,
       onModelLoaded: () {
         setState(() {
-          _message = 'Model initialized';
+          _message = 'Model initialized successfully';
+          _isInitializingModel = false;
         });
       },
       onLog: (log) {
@@ -109,9 +116,6 @@ class _MyAppState extends State<MyApp> {
           if (match != null) {
             setState(() {
               _ramUsage = 'Total RAM Usage: ${match.group(1)}MB';
-              _waitForRamUsage = false;
-              _isModelInitializing = false;
-              _message = 'Model ready';
             });
           }
         }
@@ -122,17 +126,22 @@ class _MyAppState extends State<MyApp> {
           _progressMessage =
               'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)';
         });
+        developer.log(
+            'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)');
       },
     );
 
     _processor!.imageStream.listen((image) async {
+      // Convert ui.Image to bytes using toByteData
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
 
       setState(() {
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
         _message = 'Generation complete';
+        _isGeneratingImage = false;
       });
 
+      // Save the image
       final saveResult = await _processor!.saveGeneratedImage(
         image,
         _promptController.text,
@@ -143,7 +152,6 @@ class _MyAppState extends State<MyApp> {
 
       setState(() {
         _message = saveResult;
-        _isGeneratingImage = false;
       });
     });
   }
@@ -174,162 +182,264 @@ class _MyAppState extends State<MyApp> {
               Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isBusy
-                          ? null
-                          : () async {
-                              setState(() => _isModelInitializing = true);
-                              try {
-                                final result =
-                                    await showDialog<(bool, SDType, Schedule)>(
-                                  context: context,
-                                  builder: (BuildContext context) {
-                                    Schedule dialogSchedule = Schedule.DISCRETE;
-                                    SDType dialogType = SDType.NONE;
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ElevatedButton(
+                          onPressed: _isInitializingModel ||
+                                  _isLoadingLora ||
+                                  _isLoadingTaesd ||
+                                  _isGeneratingImage
+                              ? null
+                              : () async {
+                                  if (_processor != null) {
+                                    _processor!.dispose();
+                                    _processor = null;
+                                  }
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final result = await showDialog<
+                                      (bool, SDType, Schedule)>(
+                                    context: context,
+                                    builder: (BuildContext context) {
+                                      Schedule dialogSchedule =
+                                          Schedule.DISCRETE;
+                                      SDType dialogType = SDType.NONE;
 
-                                    return StatefulBuilder(
-                                      builder: (context, setState) {
-                                        return AlertDialog(
-                                          title: const Text(
-                                              'Model Initialization Options'),
-                                          content: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Text('Model Type'),
-                                              DropdownButton<SDType>(
-                                                value: dialogType,
-                                                isExpanded: true,
-                                                items: SDType.values
-                                                    .map((SDType type) {
-                                                  return DropdownMenuItem<
-                                                      SDType>(
-                                                    value: type,
-                                                    child:
-                                                        Text(type.displayName),
-                                                  );
-                                                }).toList(),
-                                                onChanged: (SDType? newValue) {
-                                                  if (newValue != null) {
+                                      return StatefulBuilder(
+                                        builder: (context, setState) {
+                                          return AlertDialog(
+                                            title: const Text(
+                                                'Model Initialization Options'),
+                                            content: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Text('Model Type'),
+                                                DropdownButton<SDType>(
+                                                  value: dialogType,
+                                                  isExpanded: true,
+                                                  items: SDType.values
+                                                      .map((SDType type) {
+                                                    return DropdownMenuItem<
+                                                        SDType>(
+                                                      value: type,
+                                                      child: Text(
+                                                          type.displayName),
+                                                    );
+                                                  }).toList(),
+                                                  onChanged:
+                                                      (SDType? newValue) {
+                                                    if (newValue != null) {
+                                                      setState(() {
+                                                        dialogType = newValue;
+                                                      });
+                                                    }
+                                                  },
+                                                ),
+                                                const SizedBox(height: 10),
+                                                const Text('Schedule'),
+                                                DropdownButton<Schedule>(
+                                                  value: dialogSchedule,
+                                                  isExpanded: true,
+                                                  items: Schedule.values
+                                                      .map((schedule) {
+                                                    return DropdownMenuItem<
+                                                        Schedule>(
+                                                      value: schedule,
+                                                      child: Text(
+                                                          schedule.displayName),
+                                                    );
+                                                  }).toList(),
+                                                  onChanged:
+                                                      (Schedule? newValue) {
                                                     setState(() {
-                                                      dialogType = newValue;
+                                                      dialogSchedule =
+                                                          newValue!;
                                                     });
-                                                  }
-                                                },
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                            actions: <Widget>[
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(context),
+                                                child: const Text('Cancel'),
                                               ),
-                                              const SizedBox(height: 10),
-                                              const Text('Schedule'),
-                                              DropdownButton<Schedule>(
-                                                value: dialogSchedule,
-                                                isExpanded: true,
-                                                items: Schedule.values
-                                                    .map((schedule) {
-                                                  return DropdownMenuItem<
-                                                      Schedule>(
-                                                    value: schedule,
-                                                    child: Text(
-                                                        schedule.displayName),
-                                                  );
-                                                }).toList(),
-                                                onChanged:
-                                                    (Schedule? newValue) {
-                                                  setState(() {
-                                                    dialogSchedule = newValue!;
-                                                  });
+                                              TextButton(
+                                                onPressed: () {
+                                                  Navigator.pop(context, (
+                                                    false,
+                                                    dialogType,
+                                                    dialogSchedule
+                                                  ));
                                                 },
+                                                child: const Text(
+                                                    'Without Flash Attention'),
+                                              ),
+                                              TextButton(
+                                                onPressed: () => Navigator.pop(
+                                                    context, (
+                                                  true,
+                                                  dialogType,
+                                                  dialogSchedule
+                                                )),
+                                                child: const Text(
+                                                    'With Flash Attention'),
                                               ),
                                             ],
-                                          ),
-                                          actions: <Widget>[
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(context),
-                                              child: const Text('Cancel'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(
-                                                  context, (
-                                                false,
-                                                dialogType,
-                                                dialogSchedule
-                                              )),
-                                              child: const Text(
-                                                  'Without Flash Attention'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(
-                                                  context, (
-                                                true,
-                                                dialogType,
-                                                dialogSchedule
-                                              )),
-                                              child: const Text(
-                                                  'With Flash Attention'),
-                                            ),
-                                          ],
+                                          );
+                                        },
+                                      );
+                                    },
+                                  );
+
+                                  if (result != null) {
+                                    final (
+                                      useFlashAttention,
+                                      selectedType,
+                                      selectedSchedule
+                                    ) = result;
+
+                                    // Use directory selection first
+                                    final selectedDir = await FilePicker
+                                        .platform
+                                        .getDirectoryPath(
+                                            initialDirectory: modelDirPath);
+
+                                    if (selectedDir != null) {
+                                      // Then show a dialog to select from available model files
+                                      final directory = Directory(selectedDir);
+                                      final files = directory.listSync();
+                                      final modelFiles = files
+                                          .whereType<File>()
+                                          .where((file) =>
+                                              file.path
+                                                  .endsWith('.safetensors') ||
+                                              file.path.endsWith('.ckpt') ||
+                                              file.path.endsWith('.gguf'))
+                                          .toList();
+
+                                      if (modelFiles.isNotEmpty) {
+                                        final selectedModel =
+                                            await showDialog<String>(
+                                          context: context,
+                                          builder: (BuildContext context) {
+                                            return AlertDialog(
+                                              title: const Text('Select Model'),
+                                              content: SingleChildScrollView(
+                                                child: Column(
+                                                  children: modelFiles
+                                                      .map((file) => ListTile(
+                                                            title: Text(file
+                                                                .path
+                                                                .split('/')
+                                                                .last),
+                                                            onTap: () =>
+                                                                Navigator.pop(
+                                                                    context,
+                                                                    file.path),
+                                                          ))
+                                                      .toList(),
+                                                ),
+                                              ),
+                                            );
+                                          },
                                         );
-                                      },
-                                    );
-                                  },
-                                );
 
-                                if (result != null) {
-                                  final (
-                                    useFlashAttention,
-                                    selectedType,
-                                    selectedSchedule
-                                  ) = result;
-                                  final pickedFile = await FilePicker.platform
-                                      .pickFiles(
-                                          type: FileType.any,
-                                          allowMultiple: false);
-
-                                  if (pickedFile != null) {
-                                    final modelPath =
-                                        pickedFile.files.single.path!;
-                                    _initializeProcessor(
-                                        modelPath,
-                                        useFlashAttention,
-                                        selectedType,
-                                        selectedSchedule);
+                                        if (selectedModel != null) {
+                                          _initializeProcessor(
+                                              selectedModel,
+                                              useFlashAttention,
+                                              selectedType,
+                                              selectedSchedule);
+                                        }
+                                      }
+                                    }
                                   }
-                                }
-                              } finally {
-                                setState(() => _isModelInitializing = false);
-                              }
-                            },
-                      child: _isModelInitializing
-                          ? const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white),
-                                  ),
-                                ),
-                                SizedBox(width: 8),
-                                Text('Initializing...'),
-                              ],
-                            )
-                          : const Text('Initialize Model'),
+                                },
+                          child: const Text('Initialize Model'),
+                        ),
+                        if (_isInitializingModel)
+                          const CircularProgressIndicator(),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isBusy
-                          ? null
-                          : () async {
-                              final result =
-                                  await FilePicker.platform.getDirectoryPath();
-                              if (result != null) {
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ElevatedButton(
+                          onPressed: _isInitializingModel ||
+                                  _isLoadingLora ||
+                                  _isLoadingTaesd ||
+                                  _isGeneratingImage
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _isLoadingLora = true;
+                                  });
+                                  final result = await FilePicker.platform
+                                      .getDirectoryPath();
+                                  if (result != null) {
+                                    setState(() {
+                                      _loraPath = result;
+                                      _loraMessage =
+                                          "LORA directory loaded: ${result.split('/').last}";
+                                      if (_processor != null) {
+                                        String currentModelPath =
+                                            _processor!.modelPath;
+                                        bool currentFlashAttention =
+                                            _processor!.useFlashAttention;
+                                        SDType currentModelType =
+                                            _processor!.modelType;
+                                        Schedule currentSchedule =
+                                            _processor!.schedule;
+
+                                        _initializeProcessor(
+                                            currentModelPath,
+                                            currentFlashAttention,
+                                            currentModelType,
+                                            currentSchedule);
+                                      }
+                                      _isLoadingLora = false;
+                                    });
+                                  } else {
+                                    setState(() {
+                                      _isLoadingLora = false;
+                                    });
+                                  }
+                                },
+                          child: const Text('Load LORA'),
+                        ),
+                        if (_isLoadingLora) const CircularProgressIndicator(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _useTinyAutoencoder,
+                        onChanged: _isInitializingModel ||
+                                _isLoadingLora ||
+                                _isLoadingTaesd ||
+                                _isGeneratingImage
+                            ? null
+                            : (bool? value) {
+                                if (_taesdPath == null) {
+                                  _showTemporaryError(
+                                      'Please load TAESD model first');
+                                  return;
+                                }
                                 setState(() {
-                                  _loraPath = result;
-                                  _loraMessage =
-                                      "LORA directory loaded: ${result.split('/').last}";
+                                  _useTinyAutoencoder = value ?? false;
                                   if (_processor != null) {
                                     String currentModelPath =
                                         _processor!.modelPath;
@@ -347,92 +457,114 @@ class _MyAppState extends State<MyApp> {
                                         currentSchedule);
                                   }
                                 });
-                              }
-                            },
-                      child: const Text('Load LORA'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: _useTinyAutoencoder,
-                        onChanged: (bool? value) {
-                          if (_taesdPath == null) {
-                            _showTemporaryError(
-                                'Please load TAESD model first');
-                            return;
-                          }
-                          setState(() {
-                            _useTinyAutoencoder = value ?? false;
-                            _isModelInitializing = true;
-                            _waitForRamUsage = true;
-                          });
-
-                          if (_processor != null) {
-                            _initializeProcessor(
-                              _processor!.modelPath,
-                              _processor!.useFlashAttention,
-                              _processor!.modelType,
-                              _processor!.schedule,
-                            );
-                          } else {
-                            setState(() {
-                              _waitForRamUsage = false;
-                              _isModelInitializing = false;
-                            });
-                          }
-                        },
+                              },
                       ),
                       const Text('Use Tiny AutoEncoder'),
                       const Spacer(),
-                      ElevatedButton(
-                        onPressed: _isBusy
-                            ? null
-                            : () async {
-                                setState(() {
-                                  _isModelInitializing = true;
-                                  _waitForRamUsage = true;
-                                });
-
-                                try {
-                                  final result = await FilePicker.platform
-                                      .pickFiles(
-                                          type: FileType.any,
-                                          allowMultiple: false);
-
-                                  if (result != null) {
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          ElevatedButton(
+                            onPressed: _isInitializingModel ||
+                                    _isLoadingLora ||
+                                    _isLoadingTaesd ||
+                                    _isGeneratingImage
+                                ? null
+                                : () async {
                                     setState(() {
-                                      _taesdPath = result.files.single.path!;
-                                      _taesdMessage =
-                                          "TAESD loaded: ${result.files.single.name}";
-                                      _taesdError = '';
+                                      _isLoadingTaesd = true;
                                     });
+                                    final modelDirPath =
+                                        await getModelDirectory();
+                                    final selectedDir = await FilePicker
+                                        .platform
+                                        .getDirectoryPath(
+                                            initialDirectory: modelDirPath);
 
-                                    if (_processor != null) {
-                                      _initializeProcessor(
-                                        _processor!.modelPath,
-                                        _processor!.useFlashAttention,
-                                        _processor!.modelType,
-                                        _processor!.schedule,
-                                      );
+                                    if (selectedDir != null) {
+                                      final directory = Directory(selectedDir);
+                                      final files = directory.listSync();
+                                      final taesdFiles = files
+                                          .whereType<File>()
+                                          .where((file) =>
+                                              file.path
+                                                  .endsWith('.safetensors') ||
+                                              file.path.endsWith('.bin'))
+                                          .toList();
+
+                                      if (taesdFiles.isNotEmpty) {
+                                        final selectedTaesd =
+                                            await showDialog<String>(
+                                          context: context,
+                                          builder: (BuildContext context) {
+                                            return AlertDialog(
+                                              title: const Text(
+                                                  'Select TAESD Model'),
+                                              content: SingleChildScrollView(
+                                                child: Column(
+                                                  children: taesdFiles
+                                                      .map((file) => ListTile(
+                                                            title: Text(file
+                                                                .path
+                                                                .split('/')
+                                                                .last),
+                                                            onTap: () =>
+                                                                Navigator.pop(
+                                                                    context,
+                                                                    file.path),
+                                                          ))
+                                                      .toList(),
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        );
+
+                                        if (selectedTaesd != null) {
+                                          setState(() {
+                                            _taesdPath = selectedTaesd;
+                                            _taesdMessage =
+                                                "TAESD loaded: ${selectedTaesd.split('/').last}";
+                                            _taesdError = '';
+                                            if (_processor != null) {
+                                              String currentModelPath =
+                                                  _processor!.modelPath;
+                                              bool currentFlashAttention =
+                                                  _processor!.useFlashAttention;
+                                              SDType currentModelType =
+                                                  _processor!.modelType;
+                                              Schedule currentSchedule =
+                                                  _processor!.schedule;
+
+                                              _initializeProcessor(
+                                                  currentModelPath,
+                                                  currentFlashAttention,
+                                                  currentModelType,
+                                                  currentSchedule);
+                                            }
+                                            _isLoadingTaesd = false;
+                                          });
+                                        } else {
+                                          setState(() {
+                                            _isLoadingTaesd = false;
+                                          });
+                                        }
+                                      } else {
+                                        setState(() {
+                                          _isLoadingTaesd = false;
+                                        });
+                                      }
+                                    } else {
+                                      setState(() {
+                                        _isLoadingTaesd = false;
+                                      });
                                     }
-                                  }
-                                } finally {
-                                  if (_processor == null) {
-                                    setState(() {
-                                      _waitForRamUsage = false;
-                                      _isModelInitializing = false;
-                                    });
-                                  }
-                                }
-                              },
-                        child: const Text('Load TAESD'),
+                                  },
+                            child: const Text('Load TAESD'),
+                          ),
+                          if (_isLoadingTaesd)
+                            const CircularProgressIndicator(),
+                        ],
                       ),
                     ],
                   ),
@@ -481,11 +613,16 @@ class _MyAppState extends State<MyApp> {
                               child: Text(method.displayName),
                             );
                           }).toList(),
-                          onChanged: (SampleMethod? newValue) {
-                            setState(() {
-                              _selectedSampleMethod = newValue!;
-                            });
-                          },
+                          onChanged: _isInitializingModel ||
+                                  _isLoadingLora ||
+                                  _isLoadingTaesd ||
+                                  _isGeneratingImage
+                              ? null
+                              : (SampleMethod? newValue) {
+                                  setState(() {
+                                    _selectedSampleMethod = newValue!;
+                                  });
+                                },
                         ),
                       ],
                     ),
@@ -501,7 +638,12 @@ class _MyAppState extends State<MyApp> {
                       max: 20.0,
                       divisions: 38,
                       label: _cfgScale.toString(),
-                      onChanged: (value) => setState(() => _cfgScale = value),
+                      onChanged: _isInitializingModel ||
+                              _isLoadingLora ||
+                              _isLoadingTaesd ||
+                              _isGeneratingImage
+                          ? null
+                          : (value) => setState(() => _cfgScale = value),
                     ),
                   ),
                   Text('CFG: ${_cfgScale.toStringAsFixed(1)}'),
@@ -516,8 +658,12 @@ class _MyAppState extends State<MyApp> {
                       max: 50,
                       divisions: 49,
                       label: _steps.toString(),
-                      onChanged: (value) =>
-                          setState(() => _steps = value.toInt()),
+                      onChanged: _isInitializingModel ||
+                              _isLoadingLora ||
+                              _isLoadingTaesd ||
+                              _isGeneratingImage
+                          ? null
+                          : (value) => setState(() => _steps = value.toInt()),
                     ),
                   ),
                   Text('Steps: $_steps'),
@@ -530,8 +676,13 @@ class _MyAppState extends State<MyApp> {
                       initialValue: _width.toString(),
                       decoration: const InputDecoration(labelText: 'Width'),
                       keyboardType: TextInputType.number,
-                      onChanged: (value) =>
-                          setState(() => _width = int.tryParse(value) ?? 512),
+                      onChanged: _isInitializingModel ||
+                              _isLoadingLora ||
+                              _isLoadingTaesd ||
+                              _isGeneratingImage
+                          ? null
+                          : (value) => setState(
+                              () => _width = int.tryParse(value) ?? 512),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -540,8 +691,13 @@ class _MyAppState extends State<MyApp> {
                       initialValue: _height.toString(),
                       decoration: const InputDecoration(labelText: 'Height'),
                       keyboardType: TextInputType.number,
-                      onChanged: (value) =>
-                          setState(() => _height = int.tryParse(value) ?? 512),
+                      onChanged: _isInitializingModel ||
+                              _isLoadingLora ||
+                              _isLoadingTaesd ||
+                              _isGeneratingImage
+                          ? null
+                          : (value) => setState(
+                              () => _height = int.tryParse(value) ?? 512),
                     ),
                   ),
                 ],
@@ -551,8 +707,13 @@ class _MyAppState extends State<MyApp> {
                 decoration:
                     const InputDecoration(labelText: 'Seed (-1 for random)'),
                 keyboardType: TextInputType.number,
-                onChanged: (value) =>
-                    setState(() => _seed = int.tryParse(value) ?? -1),
+                onChanged: _isInitializingModel ||
+                        _isLoadingLora ||
+                        _isLoadingTaesd ||
+                        _isGeneratingImage
+                    ? null
+                    : (value) =>
+                        setState(() => _seed = int.tryParse(value) ?? -1),
               ),
               const SizedBox(height: 20),
               if (_progressMessage.isNotEmpty)
@@ -566,47 +727,40 @@ class _MyAppState extends State<MyApp> {
                   style: const TextStyle(fontSize: 16),
                 ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _isBusy
-                    ? null
-                    : () {
-                        setState(() => _isGeneratingImage = true);
-                        if (_processor != null) {
-                          print("Sending generation request to processor");
-                          setState(() => _message = 'Generating image...');
-                          _processor!.generateImage(
-                            prompt: _promptController.text,
-                            negativePrompt: _negativePromptController.text,
-                            cfgScale: _cfgScale,
-                            sampleSteps: _steps,
-                            width: _width,
-                            height: _height,
-                            seed: _seed,
-                            sampleMethod: _selectedSampleMethod.index,
-                          );
-                        } else {
-                          setState(() => _isGeneratingImage = false);
-                          print("Processor is null!");
-                        }
-                      },
-                child: _isGeneratingImage
-                    ? const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          ),
-                          SizedBox(width: 8),
-                          Text('Generating...'),
-                        ],
-                      )
-                    : const Text('Generate Image'),
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: _isInitializingModel ||
+                            _isLoadingLora ||
+                            _isLoadingTaesd ||
+                            _isGeneratingImage
+                        ? null
+                        : () {
+                            if (_processor != null) {
+                              print("Sending generation request to processor");
+                              setState(() {
+                                _message = 'Generating image...';
+                                _isGeneratingImage = true;
+                              });
+                              _processor!.generateImage(
+                                prompt: _promptController.text,
+                                negativePrompt: _negativePromptController.text,
+                                cfgScale: _cfgScale,
+                                sampleSteps: _steps,
+                                width: _width,
+                                height: _height,
+                                seed: _seed,
+                                sampleMethod: _selectedSampleMethod.index,
+                              );
+                            } else {
+                              print("Processor is null!");
+                            }
+                          },
+                    child: const Text('Generate Image'),
+                  ),
+                  if (_isGeneratingImage) const CircularProgressIndicator(),
+                ],
               ),
               if (_generatedImage != null) ...[
                 const SizedBox(height: 20),

@@ -158,10 +158,10 @@ class FFIBindings {
           int,
           bool,
           bool,
-          bool)>('new_sd_ctx', isLeaf: true);
+          bool)>('new_sd_ctx', isLeaf: false);
 
   static final freeSdCtx = _lib.lookupFunction<Void Function(Pointer<Void>),
-      void Function(Pointer<Void>)>('free_sd_ctx', isLeaf: true);
+      void Function(Pointer<Void>)>('free_sd_ctx', isLeaf: false);
 
   static final txt2img = _lib.lookupFunction<
       Pointer<SDImage> Function(
@@ -199,5 +199,5 @@ class FFIBindings {
           double,
           double,
           bool,
-          Pointer<Utf8>)>('txt2img', isLeaf: true);
+          Pointer<Utf8>)>('txt2img', isLeaf: false);
 }
