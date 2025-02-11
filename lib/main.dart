@@ -3,31 +3,43 @@ import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:file_picker/file_picker.dart';
 import 'stable_diffusion_service.dart';
 import 'ffi_bindings.dart';
 import 'stable_diffusion_processor.dart';
-import 'package:file_picker/file_picker.dart';
 
 void main() {
-  runApp(const MaterialApp(
-    home: MyApp(),
-  ));
+  runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
-  State<MyApp> createState() => _MyAppState();
+  Widget build(BuildContext context) {
+    return ShadApp(
+      darkTheme: ShadThemeData(
+        brightness: Brightness.dark,
+        colorScheme: const ShadSlateColorScheme.dark(),
+      ),
+      home: const StableDiffusionApp(),
+    );
+  }
 }
 
-class _MyAppState extends State<MyApp> {
-  final TextEditingController _promptController = TextEditingController();
-  final TextEditingController _negativePromptController =
-      TextEditingController();
+class StableDiffusionApp extends StatefulWidget {
+  const StableDiffusionApp({super.key});
+  @override
+  State<StableDiffusionApp> createState() => _StableDiffusionAppState();
+}
+
+class _StableDiffusionAppState extends State<StableDiffusionApp> {
   Timer? _errorMessageTimer;
   StableDiffusionProcessor? _processor;
+  Image? _generatedImage;
 
+  // Status messages
   String _message = '';
   String _loraMessage = '';
   String _taesdMessage = '';
@@ -36,31 +48,24 @@ class _MyAppState extends State<MyApp> {
   String _progressMessage = '';
   String _totalTime = '';
   int _cores = 0;
-  double _cfgScale = 7.0;
-  int _steps = 20;
-  int _width = 512;
-  int _height = 512;
-  int _seed = 42;
-  Image? _generatedImage;
-  bool _useTinyAutoencoder = false;
-  SDType selectedType = SDType.NONE;
-  SampleMethod _selectedSampleMethod = SampleMethod.EULER_A;
-  Schedule _selectedSchedule = Schedule.DISCRETE;
-  String? _taesdPath;
-  String? _loraPath;
 
-  bool _isInitializingModel = false;
-  bool _isLoadingLora = false;
-  bool _isLoadingTaesd = false;
-  bool _isGeneratingImage = false;
-
-  Future<String> getModelDirectory() async {
-    final directory = Directory('/storage/emulated/0/Local Diffusion/Models');
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
-    }
-    return directory.path;
-  }
+  // UI State variables
+  bool useTAESD = false;
+  bool useVAETiling = false;
+  double clipSkip = 0;
+  bool useVAE = false;
+  String samplingMethod = 'euler_a';
+  double cfg = 7;
+  int steps = 25;
+  int width = 512;
+  int height = 512;
+  String seed = "-1";
+  String prompt = '';
+  String negativePrompt = '';
+  double progress = 0;
+  String status = '';
+  Map<String, bool> loadedComponents = {};
+  String loadingText = '';
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -74,6 +79,39 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
+  // Path variables
+  String? _taesdPath;
+  String? _loraPath;
+  String? _clipLPath;
+  String? _clipGPath;
+  String? _t5xxlPath;
+  String? _vaePath;
+  String? _embedDirPath;
+  final List<String> samplingMethods = const [
+    'euler_a',
+    'euler',
+    'heun',
+    'dpm2',
+    'dmp ++2s_a',
+    'dmp++2m',
+    'dpm++2mv2',
+    'ipndm',
+    'ipndm_v',
+    'lcm'
+  ];
+
+  List<int> getWidthOptions() {
+    List<int> opts = [];
+    for (int i = 128; i <= 512; i += 64) {
+      opts.add(i);
+    }
+    return opts;
+  }
+
+  List<int> getHeightOptions() {
+    return getWidthOptions();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -82,18 +120,21 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
-    _promptController.dispose();
-    _negativePromptController.dispose();
     _errorMessageTimer?.cancel();
     _processor?.dispose();
     super.dispose();
   }
 
+  Future<String> getModelDirectory() async {
+    final directory = Directory('/storage/emulated/0/Local Diffusion/Models');
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    return directory.path;
+  }
+
   void _initializeProcessor(String modelPath, bool useFlashAttention,
       SDType modelType, Schedule schedule) {
-    setState(() {
-      _isInitializingModel = true;
-    });
     _processor?.dispose();
     _processor = StableDiffusionProcessor(
       modelPath: modelPath,
@@ -102,11 +143,19 @@ class _MyAppState extends State<MyApp> {
       schedule: schedule,
       loraPath: _loraPath,
       taesdPath: _taesdPath,
-      useTinyAutoencoder: _useTinyAutoencoder,
+      useTinyAutoencoder: useTAESD,
+      clipLPath: _clipLPath,
+      clipGPath: _clipGPath,
+      t5xxlPath: _t5xxlPath,
+      vaePath: _vaePath,
+      embedDirPath: _embedDirPath,
+      clipSkip: clipSkip.toInt(),
+      vaeTiling: useVAETiling,
       onModelLoaded: () {
         setState(() {
           _message = 'Model initialized successfully';
-          _isInitializingModel = false;
+          loadedComponents['Model'] = true;
+          loadingText = '';
         });
       },
       onLog: (log) {
@@ -123,270 +172,492 @@ class _MyAppState extends State<MyApp> {
       },
       onProgress: (progress) {
         setState(() {
-          _progressMessage =
-              'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)';
+          this.progress = progress.progress;
+          status =
+              'Generating image... ${(progress.progress * 100).toInt()}% • Step ${progress.step}/${progress.totalSteps} • ${progress.time.toStringAsFixed(1)}s';
         });
-        developer.log(
-            'Progress: ${(progress.progress * 100).toInt()}% (Step ${progress.step}/${progress.totalSteps}, ${progress.time.toStringAsFixed(1)}s)');
       },
     );
 
     _processor!.imageStream.listen((image) async {
-      // Convert ui.Image to bytes using toByteData
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
 
       setState(() {
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
-        _message = 'Generation complete';
-        _isGeneratingImage = false;
+        status = 'Generation complete';
       });
 
-      // Save the image
-      final saveResult = await _processor!.saveGeneratedImage(
+      await _processor!.saveGeneratedImage(
         image,
-        _promptController.text,
-        _width,
-        _height,
-        _selectedSampleMethod,
+        prompt,
+        width,
+        height,
+        SampleMethod.values.firstWhere(
+          (method) =>
+              method.displayName.toLowerCase() == samplingMethod.toLowerCase(),
+          orElse: () => SampleMethod.EULER_A,
+        ),
       );
 
       setState(() {
-        _message = saveResult;
+        status = 'Generation complete';
       });
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Local Diffusion'),
-          backgroundColor: Colors.blue,
-        ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
+  void simulateLoading(String component) {
+    setState(() {
+      loadingText = 'Loading $component...';
+    });
+
+    if (component == 'Model') {
+      // Model loading is handled separately in showModelLoadDialog
+      return;
+    }
+
+    // For other components, simulate loading
+    Future.delayed(const Duration(seconds: 2), () {
+      setState(() {
+        loadedComponents[component] = true;
+        loadingText = '';
+
+        // Set appropriate paths based on component
+        switch (component) {
+          case 'TAESD':
+            _taesdPath = 'simulated/path/to/taesd';
+            _taesdMessage = "TAESD loaded successfully";
+            break;
+          case 'Lora':
+            _loraPath = 'simulated/path/to/lora';
+            _loraMessage = "LORA loaded successfully";
+            break;
+          case 'Clip_L':
+            _clipLPath = 'simulated/path/to/clip_l';
+            break;
+          case 'Clip_G':
+            _clipGPath = 'simulated/path/to/clip_g';
+            break;
+          case 'T5XXL':
+            _t5xxlPath = 'simulated/path/to/t5xxl';
+            break;
+          case 'VAE':
+            _vaePath = 'simulated/path/to/vae';
+            break;
+          case 'Embeddings':
+            _embedDirPath = 'simulated/path/to/embeddings';
+            break;
+        }
+      });
+    });
+  }
+
+  void showModelLoadDialog() {
+    String selectedQuantization = 'NONE';
+    String selectedSchedule = 'DEFAULT';
+    bool useFlashAttention = false;
+
+    final List<String> quantizationOptions = [
+      'NONE',
+      'Q8_0',
+      'Q8_1',
+      'Q8_K',
+      'Q6_K',
+      'Q5_0',
+      'Q5_1',
+      'Q5_K',
+      'Q4_0',
+      'Q4_1',
+      'Q4_K',
+      'Q3_K',
+      'Q2_K'
+    ];
+
+    final List<String> scheduleOptions = [
+      'DEFAULT',
+      'DISCRETE',
+      'KARRAS',
+      'EXPONENTIAL',
+      'AYS'
+    ];
+
+    showShadDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => ShadDialog.alert(
+          constraints: const BoxConstraints(maxWidth: 300),
+          title: const Text('Load Model Settings'),
+          description: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Available CPU Cores: $_cores',
-                style: const TextStyle(fontSize: 18),
-              ),
-              if (_ramUsage.isNotEmpty)
-                Text(
-                  _ramUsage,
-                  style: const TextStyle(fontSize: 18),
-                ),
-              const SizedBox(height: 20),
               Row(
                 children: [
+                  const Text('Quantization Type:'),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        ElevatedButton(
-                          onPressed: _isInitializingModel ||
-                                  _isLoadingLora ||
-                                  _isLoadingTaesd ||
-                                  _isGeneratingImage
-                              ? null
-                              : () async {
-                                  if (_processor != null) {
-                                    _processor!.dispose();
-                                    _processor = null;
-                                  }
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final result = await showDialog<
-                                      (bool, SDType, Schedule)>(
-                                    context: context,
-                                    builder: (BuildContext context) {
-                                      Schedule dialogSchedule =
-                                          Schedule.DISCRETE;
-                                      SDType dialogType = SDType.NONE;
-
-                                      return StatefulBuilder(
-                                        builder: (context, setState) {
-                                          return AlertDialog(
-                                            title: const Text(
-                                                'Model Initialization Options'),
-                                            content: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Text('Model Type'),
-                                                DropdownButton<SDType>(
-                                                  value: dialogType,
-                                                  isExpanded: true,
-                                                  items: SDType.values
-                                                      .map((SDType type) {
-                                                    return DropdownMenuItem<
-                                                        SDType>(
-                                                      value: type,
-                                                      child: Text(
-                                                          type.displayName),
-                                                    );
-                                                  }).toList(),
-                                                  onChanged:
-                                                      (SDType? newValue) {
-                                                    if (newValue != null) {
-                                                      setState(() {
-                                                        dialogType = newValue;
-                                                      });
-                                                    }
-                                                  },
-                                                ),
-                                                const SizedBox(height: 10),
-                                                const Text('Schedule'),
-                                                DropdownButton<Schedule>(
-                                                  value: dialogSchedule,
-                                                  isExpanded: true,
-                                                  items: Schedule.values
-                                                      .map((schedule) {
-                                                    return DropdownMenuItem<
-                                                        Schedule>(
-                                                      value: schedule,
-                                                      child: Text(
-                                                          schedule.displayName),
-                                                    );
-                                                  }).toList(),
-                                                  onChanged:
-                                                      (Schedule? newValue) {
-                                                    setState(() {
-                                                      dialogSchedule =
-                                                          newValue!;
-                                                    });
-                                                  },
-                                                ),
-                                              ],
-                                            ),
-                                            actions: <Widget>[
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.pop(context),
-                                                child: const Text('Cancel'),
-                                              ),
-                                              TextButton(
-                                                onPressed: () {
-                                                  Navigator.pop(context, (
-                                                    false,
-                                                    dialogType,
-                                                    dialogSchedule
-                                                  ));
-                                                },
-                                                child: const Text(
-                                                    'Without Flash Attention'),
-                                              ),
-                                              TextButton(
-                                                onPressed: () => Navigator.pop(
-                                                    context, (
-                                                  true,
-                                                  dialogType,
-                                                  dialogSchedule
-                                                )),
-                                                child: const Text(
-                                                    'With Flash Attention'),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      );
-                                    },
-                                  );
-
-                                  if (result != null) {
-                                    final (
-                                      useFlashAttention,
-                                      selectedType,
-                                      selectedSchedule
-                                    ) = result;
-
-                                    // Use directory selection first
-                                    final selectedDir = await FilePicker
-                                        .platform
-                                        .getDirectoryPath(
-                                            initialDirectory: modelDirPath);
-
-                                    if (selectedDir != null) {
-                                      // Then show a dialog to select from available model files
-                                      final directory = Directory(selectedDir);
-                                      final files = directory.listSync();
-                                      final modelFiles = files
-                                          .whereType<File>()
-                                          .where((file) =>
-                                              file.path
-                                                  .endsWith('.safetensors') ||
-                                              file.path.endsWith('.ckpt') ||
-                                              file.path.endsWith('.gguf'))
-                                          .toList();
-
-                                      if (modelFiles.isNotEmpty) {
-                                        final selectedModel =
-                                            await showDialog<String>(
-                                          context: context,
-                                          builder: (BuildContext context) {
-                                            return AlertDialog(
-                                              title: const Text('Select Model'),
-                                              content: SingleChildScrollView(
-                                                child: Column(
-                                                  children: modelFiles
-                                                      .map((file) => ListTile(
-                                                            title: Text(file
-                                                                .path
-                                                                .split('/')
-                                                                .last),
-                                                            onTap: () =>
-                                                                Navigator.pop(
-                                                                    context,
-                                                                    file.path),
-                                                          ))
-                                                      .toList(),
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        );
-
-                                        if (selectedModel != null) {
-                                          _initializeProcessor(
-                                              selectedModel,
-                                              useFlashAttention,
-                                              selectedType,
-                                              selectedSchedule);
-                                        }
-                                      }
-                                    }
-                                  }
-                                },
-                          child: const Text('Initialize Model'),
-                        ),
-                        if (_isInitializingModel)
-                          const CircularProgressIndicator(),
-                      ],
+                    child: ShadSelect<String>(
+                      placeholder: Text(selectedQuantization),
+                      onChanged: (value) => setState(
+                          () => selectedQuantization = value ?? 'NONE'),
+                      options: quantizationOptions
+                          .map((type) => ShadOption(
+                                value: type,
+                                child: Text(type),
+                              ))
+                          .toList(),
+                      selectedOptionBuilder: (context, value) => Text(value),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Text('Schedule:'),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Stack(
-                      alignment: Alignment.center,
+                    child: ShadSelect<String>(
+                      placeholder: Text(selectedSchedule),
+                      onChanged: (value) =>
+                          setState(() => selectedSchedule = value ?? 'DEFAULT'),
+                      options: scheduleOptions
+                          .map((schedule) => ShadOption(
+                                value: schedule,
+                                child: Text(schedule),
+                              ))
+                          .toList(),
+                      selectedOptionBuilder: (context, value) => Text(value),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ShadSwitch(
+                value: useFlashAttention,
+                onChanged: (v) => setState(() => useFlashAttention = v),
+                label: const Text('Use Flash Attention'),
+              ),
+            ],
+          ),
+          actions: [
+            ShadButton.outline(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ShadButton(
+              onPressed: () async {
+                final modelDirPath = await getModelDirectory();
+                final selectedDir = await FilePicker.platform
+                    .getDirectoryPath(initialDirectory: modelDirPath);
+
+                if (selectedDir != null) {
+                  final directory = Directory(selectedDir);
+                  final files = directory.listSync();
+                  final modelFiles = files
+                      .whereType<File>()
+                      .where((file) =>
+                          file.path.endsWith('.safetensors') ||
+                          file.path.endsWith('.ckpt') ||
+                          file.path.endsWith('.gguf'))
+                      .toList();
+
+                  if (modelFiles.isNotEmpty) {
+                    final selectedModel = await showDialog<String>(
+                      context: context,
+                      builder: (BuildContext context) {
+                        return AlertDialog(
+                          title: const Text('Select Model'),
+                          content: SingleChildScrollView(
+                            child: Column(
+                              children: modelFiles
+                                  .map((file) => ListTile(
+                                        title: Text(file.path.split('/').last),
+                                        onTap: () =>
+                                            Navigator.pop(context, file.path),
+                                      ))
+                                  .toList(),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+
+                    if (selectedModel != null) {
+                      setState(() => loadingText = 'Loading Model...');
+                      _initializeProcessor(
+                        selectedModel,
+                        useFlashAttention,
+                        SDType.values.firstWhere(
+                          (type) => type.displayName == selectedQuantization,
+                          orElse: () => SDType.NONE,
+                        ),
+                        Schedule.values.firstWhere(
+                          (s) => s.displayName == selectedSchedule,
+                          orElse: () => Schedule.DISCRETE,
+                        ),
+                      );
+                    }
+                  }
+                }
+                Navigator.of(context).pop();
+              },
+              child: const Text('Load Model'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Local Diffusion',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: theme.colorScheme.background,
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (loadingText.isNotEmpty || loadedComponents.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: loadedComponents.entries
+                          .map((entry) => Text(
+                                '${entry.key} loaded ✓',
+                                style: theme.textTheme.p.copyWith(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                                  .animate()
+                                  .fadeIn(
+                                      duration:
+                                          const Duration(milliseconds: 500))
+                                  .slideY(begin: -0.2, end: 0))
+                          .toList(),
+                    ),
+                    if (loadingText.isNotEmpty) const SizedBox(height: 8),
+                    if (loadingText.isNotEmpty)
+                      TweenAnimationBuilder(
+                        duration: const Duration(milliseconds: 800),
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        builder: (context, value, child) {
+                          return Text(
+                            '$loadingText${'..' * ((value * 3).floor())}',
+                            style: theme.textTheme.p.copyWith(
+                              color: Colors.orange,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          );
+                        },
+                      ).animate().fadeIn(),
+                  ],
+                ),
+              ),
+            Row(
+              children: [
+                ShadButton(
+                  onPressed: showModelLoadDialog,
+                  child: const Text('Load Model'),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(LucideIcons.circleHelp,
+                      size: 24, color: Colors.white),
+                  onPressed: () {
+                    showShadDialog(
+                      context: context,
+                      builder: (context) => ShadDialog.alert(
+                        title: const Text('Model Information'),
+                        constraints: const BoxConstraints(maxWidth: 400),
+                        description: const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Load an SD or Flux model'),
+                            SizedBox(height: 8),
+                            Text('Supported models:',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text('\nSD 1.x, SD 2.x, SDXL, SDXL Turbo'),
+                            Text('SD 3 Medium/Large, SD 3.5 Medium/Large'),
+                            Text('Flux 1 Dev, Flux 1 Schnell, Flux Lite'),
+                            SizedBox(height: 16),
+                            Text('Supported formats:',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text('\nSafeTensors, CKPT, GGUF'),
+                            Text('FP32/FP16 and quantized GGUF formats'),
+                            Text(
+                                'Distilled formats: Turbo, LCM, Lightning, Hyper'),
+                            SizedBox(height: 16),
+                            Text('Where to download models?',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text('\nRecommended websites:'),
+                            Text('• civitai.com'),
+                            Text('• huggingface.co'),
+                          ],
+                        ),
+                        actions: [
+                          ShadButton(
+                            child: const Text('Close'),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                ShadButton(
+                  onPressed: () async {
+                    final modelDirPath = await getModelDirectory();
+                    final selectedDir = await FilePicker.platform
+                        .getDirectoryPath(initialDirectory: modelDirPath);
+
+                    if (selectedDir != null) {
+                      final directory = Directory(selectedDir);
+                      final files = directory.listSync();
+                      final taesdFiles = files
+                          .whereType<File>()
+                          .where((file) =>
+                              file.path.endsWith('.safetensors') ||
+                              file.path.endsWith('.bin'))
+                          .toList();
+
+                      if (taesdFiles.isNotEmpty) {
+                        final selectedTaesd = await showDialog<String>(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              title: const Text('Select TAESD Model'),
+                              content: SingleChildScrollView(
+                                child: Column(
+                                  children: taesdFiles
+                                      .map((file) => ListTile(
+                                            title:
+                                                Text(file.path.split('/').last),
+                                            onTap: () => Navigator.pop(
+                                                context, file.path),
+                                          ))
+                                      .toList(),
+                                ),
+                              ),
+                            );
+                          },
+                        );
+
+                        if (selectedTaesd != null) {
+                          setState(() {
+                            _taesdPath = selectedTaesd;
+                            loadedComponents['TAESD'] = true;
+                            _taesdError = '';
+
+                            // Reinitialize processor if it exists
+                            if (_processor != null) {
+                              String currentModelPath = _processor!.modelPath;
+                              bool currentFlashAttention =
+                                  _processor!.useFlashAttention;
+                              SDType currentModelType = _processor!.modelType;
+                              Schedule currentSchedule = _processor!.schedule;
+
+                              _initializeProcessor(
+                                currentModelPath,
+                                currentFlashAttention,
+                                currentModelType,
+                                currentSchedule,
+                              );
+                            }
+                          });
+                        }
+                      }
+                    }
+                  },
+                  child: const Text('Load TAESD'),
+                ),
+                const SizedBox(width: 8),
+                ShadCheckbox(
+                  value: useTAESD,
+                  onChanged: (bool v) {
+                    if (_taesdPath == null) {
+                      _showTemporaryError('Please load TAESD model first');
+                      return;
+                    }
+                    setState(() {
+                      useTAESD = v;
+                      // Reinitialize processor if it exists
+                      if (_processor != null) {
+                        String currentModelPath = _processor!.modelPath;
+                        bool currentFlashAttention =
+                            _processor!.useFlashAttention;
+                        SDType currentModelType = _processor!.modelType;
+                        Schedule currentSchedule = _processor!.schedule;
+
+                        _initializeProcessor(
+                          currentModelPath,
+                          currentFlashAttention,
+                          currentModelType,
+                          currentSchedule,
+                        );
+                      }
+                    });
+                  },
+                  label: const Text('Use TAESD'),
+                ),
+              ],
+            ),
+            if (_taesdError.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(left: 8.0, top: 4.0),
+                child: Text(
+                  _taesdError,
+                  style: theme.textTheme.p.copyWith(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
+            ShadAccordion<Map<String, dynamic>>(
+              children: [
+                ShadAccordionItem<Map<String, dynamic>>(
+                  value: const {},
+                  title: const Text('Advanced Options'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
                       children: [
-                        ElevatedButton(
-                          onPressed: _isInitializingModel ||
-                                  _isLoadingLora ||
-                                  _isLoadingTaesd ||
-                                  _isGeneratingImage
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _isLoadingLora = true;
-                                  });
-                                  final result = await FilePicker.platform
-                                      .getDirectoryPath();
-                                  if (result != null) {
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ShadButton(
+                                onPressed: () async {
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final selectedDir = await FilePicker.platform
+                                      .getDirectoryPath(
+                                          initialDirectory: modelDirPath);
+
+                                  if (selectedDir != null) {
                                     setState(() {
-                                      _loraPath = result;
+                                      _loraPath = selectedDir;
+                                      loadedComponents['LORA'] = true;
                                       _loraMessage =
-                                          "LORA directory loaded: ${result.split('/').last}";
+                                          "LORA directory loaded: ${selectedDir.split('/').last}";
+
+                                      // Reinitialize processor if it exists
                                       if (_processor != null) {
                                         String currentModelPath =
                                             _processor!.modelPath;
@@ -398,48 +669,391 @@ class _MyAppState extends State<MyApp> {
                                             _processor!.schedule;
 
                                         _initializeProcessor(
-                                            currentModelPath,
-                                            currentFlashAttention,
-                                            currentModelType,
-                                            currentSchedule);
+                                          currentModelPath,
+                                          currentFlashAttention,
+                                          currentModelType,
+                                          currentSchedule,
+                                        );
                                       }
-                                      _isLoadingLora = false;
-                                    });
-                                  } else {
-                                    setState(() {
-                                      _isLoadingLora = false;
                                     });
                                   }
                                 },
-                          child: const Text('Load LORA'),
+                                child: const Text('Load Lora'),
+                              ),
+                            ),
+                          ],
                         ),
-                        if (_isLoadingLora) const CircularProgressIndicator(),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: _useTinyAutoencoder,
-                        onChanged: _isInitializingModel ||
-                                _isLoadingLora ||
-                                _isLoadingTaesd ||
-                                _isGeneratingImage
-                            ? null
-                            : (bool? value) {
-                                if (_taesdPath == null) {
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ShadButton(
+                                onPressed: () async {
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final selectedDir = await FilePicker.platform
+                                      .getDirectoryPath(
+                                          initialDirectory: modelDirPath);
+
+                                  if (selectedDir != null) {
+                                    final directory = Directory(selectedDir);
+                                    final files = directory.listSync();
+                                    final clipFiles = files
+                                        .whereType<File>()
+                                        .where((file) =>
+                                            file.path
+                                                .endsWith('.safetensors') ||
+                                            file.path.endsWith('.bin'))
+                                        .toList();
+
+                                    if (clipFiles.isNotEmpty) {
+                                      final selectedClip =
+                                          await showDialog<String>(
+                                        context: context,
+                                        builder: (BuildContext context) {
+                                          return AlertDialog(
+                                            title: const Text(
+                                                'Select Clip_L Model'),
+                                            content: SingleChildScrollView(
+                                              child: Column(
+                                                children: clipFiles
+                                                    .map((file) => ListTile(
+                                                          title: Text(file.path
+                                                              .split('/')
+                                                              .last),
+                                                          onTap: () =>
+                                                              Navigator.pop(
+                                                                  context,
+                                                                  file.path),
+                                                        ))
+                                                    .toList(),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      );
+
+                                      if (selectedClip != null) {
+                                        setState(() {
+                                          _clipLPath = selectedClip;
+                                          loadedComponents['Clip_L'] = true;
+
+                                          if (_processor != null) {
+                                            String currentModelPath =
+                                                _processor!.modelPath;
+                                            bool currentFlashAttention =
+                                                _processor!.useFlashAttention;
+                                            SDType currentModelType =
+                                                _processor!.modelType;
+                                            Schedule currentSchedule =
+                                                _processor!.schedule;
+
+                                            _initializeProcessor(
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
+                                          }
+                                        });
+                                      }
+                                    }
+                                  }
+                                },
+                                child: const Text('Load Clip_L'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadButton(
+                                onPressed: () async {
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final selectedDir = await FilePicker.platform
+                                      .getDirectoryPath(
+                                          initialDirectory: modelDirPath);
+
+                                  if (selectedDir != null) {
+                                    final directory = Directory(selectedDir);
+                                    final files = directory.listSync();
+                                    final clipFiles = files
+                                        .whereType<File>()
+                                        .where((file) =>
+                                            file.path
+                                                .endsWith('.safetensors') ||
+                                            file.path.endsWith('.bin'))
+                                        .toList();
+
+                                    if (clipFiles.isNotEmpty) {
+                                      final selectedClip =
+                                          await showDialog<String>(
+                                        context: context,
+                                        builder: (BuildContext context) {
+                                          return AlertDialog(
+                                            title: const Text(
+                                                'Select Clip_G Model'),
+                                            content: SingleChildScrollView(
+                                              child: Column(
+                                                children: clipFiles
+                                                    .map((file) => ListTile(
+                                                          title: Text(file.path
+                                                              .split('/')
+                                                              .last),
+                                                          onTap: () =>
+                                                              Navigator.pop(
+                                                                  context,
+                                                                  file.path),
+                                                        ))
+                                                    .toList(),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      );
+
+                                      if (selectedClip != null) {
+                                        setState(() {
+                                          _clipGPath = selectedClip;
+                                          loadedComponents['Clip_G'] = true;
+
+                                          if (_processor != null) {
+                                            String currentModelPath =
+                                                _processor!.modelPath;
+                                            bool currentFlashAttention =
+                                                _processor!.useFlashAttention;
+                                            SDType currentModelType =
+                                                _processor!.modelType;
+                                            Schedule currentSchedule =
+                                                _processor!.schedule;
+
+                                            _initializeProcessor(
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
+                                          }
+                                        });
+                                      }
+                                    }
+                                  }
+                                },
+                                child: const Text('Load Clip_G'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ShadButton(
+                                onPressed: () async {
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final selectedDir = await FilePicker.platform
+                                      .getDirectoryPath(
+                                          initialDirectory: modelDirPath);
+
+                                  if (selectedDir != null) {
+                                    final directory = Directory(selectedDir);
+                                    final files = directory.listSync();
+                                    final t5Files = files
+                                        .whereType<File>()
+                                        .where((file) =>
+                                            file.path
+                                                .endsWith('.safetensors') ||
+                                            file.path.endsWith('.bin'))
+                                        .toList();
+
+                                    if (t5Files.isNotEmpty) {
+                                      final selectedT5 =
+                                          await showDialog<String>(
+                                        context: context,
+                                        builder: (BuildContext context) {
+                                          return AlertDialog(
+                                            title: const Text(
+                                                'Select T5XXL Model'),
+                                            content: SingleChildScrollView(
+                                              child: Column(
+                                                children: t5Files
+                                                    .map((file) => ListTile(
+                                                          title: Text(file.path
+                                                              .split('/')
+                                                              .last),
+                                                          onTap: () =>
+                                                              Navigator.pop(
+                                                                  context,
+                                                                  file.path),
+                                                        ))
+                                                    .toList(),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      );
+
+                                      if (selectedT5 != null) {
+                                        setState(() {
+                                          _t5xxlPath = selectedT5;
+                                          loadedComponents['T5XXL'] = true;
+
+                                          if (_processor != null) {
+                                            String currentModelPath =
+                                                _processor!.modelPath;
+                                            bool currentFlashAttention =
+                                                _processor!.useFlashAttention;
+                                            SDType currentModelType =
+                                                _processor!.modelType;
+                                            Schedule currentSchedule =
+                                                _processor!.schedule;
+
+                                            _initializeProcessor(
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
+                                          }
+                                        });
+                                      }
+                                    }
+                                  }
+                                },
+                                child: const Text('Load T5XXL'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadButton(
+                                onPressed: () async {
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final selectedDir = await FilePicker.platform
+                                      .getDirectoryPath(
+                                          initialDirectory: modelDirPath);
+
+                                  if (selectedDir != null) {
+                                    setState(() {
+                                      _embedDirPath = selectedDir;
+                                      loadedComponents['Embeddings'] = true;
+
+                                      if (_processor != null) {
+                                        String currentModelPath =
+                                            _processor!.modelPath;
+                                        bool currentFlashAttention =
+                                            _processor!.useFlashAttention;
+                                        SDType currentModelType =
+                                            _processor!.modelType;
+                                        Schedule currentSchedule =
+                                            _processor!.schedule;
+
+                                        _initializeProcessor(
+                                          currentModelPath,
+                                          currentFlashAttention,
+                                          currentModelType,
+                                          currentSchedule,
+                                        );
+                                      }
+                                    });
+                                  }
+                                },
+                                child: const Text('Load Embed'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ShadButton(
+                                onPressed: () async {
+                                  final modelDirPath =
+                                      await getModelDirectory();
+                                  final selectedDir = await FilePicker.platform
+                                      .getDirectoryPath(
+                                          initialDirectory: modelDirPath);
+
+                                  if (selectedDir != null) {
+                                    final directory = Directory(selectedDir);
+                                    final files = directory.listSync();
+                                    final vaeFiles = files
+                                        .whereType<File>()
+                                        .where((file) =>
+                                            file.path
+                                                .endsWith('.safetensors') ||
+                                            file.path.endsWith('.bin'))
+                                        .toList();
+
+                                    if (vaeFiles.isNotEmpty) {
+                                      final selectedVae =
+                                          await showDialog<String>(
+                                        context: context,
+                                        builder: (BuildContext context) {
+                                          return AlertDialog(
+                                            title:
+                                                const Text('Select VAE Model'),
+                                            content: SingleChildScrollView(
+                                              child: Column(
+                                                children: vaeFiles
+                                                    .map((file) => ListTile(
+                                                          title: Text(file.path
+                                                              .split('/')
+                                                              .last),
+                                                          onTap: () =>
+                                                              Navigator.pop(
+                                                                  context,
+                                                                  file.path),
+                                                        ))
+                                                    .toList(),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      );
+
+                                      if (selectedVae != null) {
+                                        setState(() {
+                                          _vaePath = selectedVae;
+                                          loadedComponents['VAE'] = true;
+
+                                          if (_processor != null) {
+                                            String currentModelPath =
+                                                _processor!.modelPath;
+                                            bool currentFlashAttention =
+                                                _processor!.useFlashAttention;
+                                            SDType currentModelType =
+                                                _processor!.modelType;
+                                            Schedule currentSchedule =
+                                                _processor!.schedule;
+
+                                            _initializeProcessor(
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
+                                          }
+                                        });
+                                      }
+                                    }
+                                  }
+                                },
+                                child: const Text('Load VAE'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ShadCheckbox(
+                              value: useVAE,
+                              onChanged: (bool v) {
+                                if (_vaePath == null) {
                                   _showTemporaryError(
-                                      'Please load TAESD model first');
+                                      'Please load VAE model first');
                                   return;
                                 }
                                 setState(() {
-                                  _useTinyAutoencoder = value ?? false;
+                                  useVAE = v;
                                   if (_processor != null) {
                                     String currentModelPath =
                                         _processor!.modelPath;
@@ -451,323 +1065,213 @@ class _MyAppState extends State<MyApp> {
                                         _processor!.schedule;
 
                                     _initializeProcessor(
-                                        currentModelPath,
-                                        currentFlashAttention,
-                                        currentModelType,
-                                        currentSchedule);
+                                      currentModelPath,
+                                      currentFlashAttention,
+                                      currentModelType,
+                                      currentSchedule,
+                                    );
                                   }
                                 });
                               },
-                      ),
-                      const Text('Use Tiny AutoEncoder'),
-                      const Spacer(),
-                      Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          ElevatedButton(
-                            onPressed: _isInitializingModel ||
-                                    _isLoadingLora ||
-                                    _isLoadingTaesd ||
-                                    _isGeneratingImage
-                                ? null
-                                : () async {
-                                    setState(() {
-                                      _isLoadingTaesd = true;
-                                    });
-                                    final modelDirPath =
-                                        await getModelDirectory();
-                                    final selectedDir = await FilePicker
-                                        .platform
-                                        .getDirectoryPath(
-                                            initialDirectory: modelDirPath);
+                              label: const Text('Use VAE'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        ShadCheckbox(
+                          value: useVAETiling,
+                          onChanged: (bool v) {
+                            if (useTAESD) {
+                              _showTemporaryError(
+                                  'VAE Tiling is incompatible with TAESD');
+                              return;
+                            }
 
-                                    if (selectedDir != null) {
-                                      final directory = Directory(selectedDir);
-                                      final files = directory.listSync();
-                                      final taesdFiles = files
-                                          .whereType<File>()
-                                          .where((file) =>
-                                              file.path
-                                                  .endsWith('.safetensors') ||
-                                              file.path.endsWith('.bin'))
-                                          .toList();
+                            setState(() {
+                              useVAETiling = v;
+                              if (_processor != null) {
+                                String currentModelPath = _processor!.modelPath;
+                                bool currentFlashAttention =
+                                    _processor!.useFlashAttention;
+                                SDType currentModelType = _processor!.modelType;
+                                Schedule currentSchedule = _processor!.schedule;
 
-                                      if (taesdFiles.isNotEmpty) {
-                                        final selectedTaesd =
-                                            await showDialog<String>(
-                                          context: context,
-                                          builder: (BuildContext context) {
-                                            return AlertDialog(
-                                              title: const Text(
-                                                  'Select TAESD Model'),
-                                              content: SingleChildScrollView(
-                                                child: Column(
-                                                  children: taesdFiles
-                                                      .map((file) => ListTile(
-                                                            title: Text(file
-                                                                .path
-                                                                .split('/')
-                                                                .last),
-                                                            onTap: () =>
-                                                                Navigator.pop(
-                                                                    context,
-                                                                    file.path),
-                                                          ))
-                                                      .toList(),
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        );
-
-                                        if (selectedTaesd != null) {
-                                          setState(() {
-                                            _taesdPath = selectedTaesd;
-                                            _taesdMessage =
-                                                "TAESD loaded: ${selectedTaesd.split('/').last}";
-                                            _taesdError = '';
-                                            if (_processor != null) {
-                                              String currentModelPath =
-                                                  _processor!.modelPath;
-                                              bool currentFlashAttention =
-                                                  _processor!.useFlashAttention;
-                                              SDType currentModelType =
-                                                  _processor!.modelType;
-                                              Schedule currentSchedule =
-                                                  _processor!.schedule;
-
-                                              _initializeProcessor(
-                                                  currentModelPath,
-                                                  currentFlashAttention,
-                                                  currentModelType,
-                                                  currentSchedule);
-                                            }
-                                            _isLoadingTaesd = false;
-                                          });
-                                        } else {
-                                          setState(() {
-                                            _isLoadingTaesd = false;
-                                          });
-                                        }
-                                      } else {
-                                        setState(() {
-                                          _isLoadingTaesd = false;
-                                        });
-                                      }
-                                    } else {
-                                      setState(() {
-                                        _isLoadingTaesd = false;
-                                      });
-                                    }
-                                  },
-                            child: const Text('Load TAESD'),
-                          ),
-                          if (_isLoadingTaesd)
-                            const CircularProgressIndicator(),
-                        ],
-                      ),
-                    ],
-                  ),
-                  if (_taesdError.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Text(
-                        _taesdError,
-                        style: const TextStyle(color: Colors.red, fontSize: 12),
-                      ),
-                    ),
-                  if (_taesdMessage.isNotEmpty)
-                    Text(
-                      'TAESD: $_taesdMessage',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text('Status: $_message', style: const TextStyle(fontSize: 16)),
-              Text('LORA: $_loraMessage', style: const TextStyle(fontSize: 16)),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _promptController,
-                decoration: const InputDecoration(labelText: 'Prompt'),
-                maxLines: 3,
-              ),
-              TextField(
-                controller: _negativePromptController,
-                decoration: const InputDecoration(labelText: 'Negative Prompt'),
-                maxLines: 2,
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Sampling Method'),
-                        DropdownButton<SampleMethod>(
-                          value: _selectedSampleMethod,
-                          isExpanded: true,
-                          items: SampleMethod.values.map((method) {
-                            return DropdownMenuItem<SampleMethod>(
-                              value: method,
-                              child: Text(method.displayName),
-                            );
-                          }).toList(),
-                          onChanged: _isInitializingModel ||
-                                  _isLoadingLora ||
-                                  _isLoadingTaesd ||
-                                  _isGeneratingImage
-                              ? null
-                              : (SampleMethod? newValue) {
-                                  setState(() {
-                                    _selectedSampleMethod = newValue!;
-                                  });
-                                },
+                                _initializeProcessor(
+                                  currentModelPath,
+                                  currentFlashAttention,
+                                  currentModelType,
+                                  currentSchedule,
+                                );
+                              }
+                            });
+                          },
+                          label: const Text('VAE Tiling'),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Slider(
-                      value: _cfgScale,
-                      min: 1.0,
-                      max: 20.0,
-                      divisions: 38,
-                      label: _cfgScale.toString(),
-                      onChanged: _isInitializingModel ||
-                              _isLoadingLora ||
-                              _isLoadingTaesd ||
-                              _isGeneratingImage
-                          ? null
-                          : (value) => setState(() => _cfgScale = value),
-                    ),
-                  ),
-                  Text('CFG: ${_cfgScale.toStringAsFixed(1)}'),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Slider(
-                      value: _steps.toDouble(),
-                      min: 1,
-                      max: 50,
-                      divisions: 49,
-                      label: _steps.toString(),
-                      onChanged: _isInitializingModel ||
-                              _isLoadingLora ||
-                              _isLoadingTaesd ||
-                              _isGeneratingImage
-                          ? null
-                          : (value) => setState(() => _steps = value.toInt()),
-                    ),
-                  ),
-                  Text('Steps: $_steps'),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      initialValue: _width.toString(),
-                      decoration: const InputDecoration(labelText: 'Width'),
-                      keyboardType: TextInputType.number,
-                      onChanged: _isInitializingModel ||
-                              _isLoadingLora ||
-                              _isLoadingTaesd ||
-                              _isGeneratingImage
-                          ? null
-                          : (value) => setState(
-                              () => _width = int.tryParse(value) ?? 512),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: TextFormField(
-                      initialValue: _height.toString(),
-                      decoration: const InputDecoration(labelText: 'Height'),
-                      keyboardType: TextInputType.number,
-                      onChanged: _isInitializingModel ||
-                              _isLoadingLora ||
-                              _isLoadingTaesd ||
-                              _isGeneratingImage
-                          ? null
-                          : (value) => setState(
-                              () => _height = int.tryParse(value) ?? 512),
-                    ),
-                  ),
-                ],
-              ),
-              TextFormField(
-                initialValue: _seed.toString(),
-                decoration:
-                    const InputDecoration(labelText: 'Seed (-1 for random)'),
-                keyboardType: TextInputType.number,
-                onChanged: _isInitializingModel ||
-                        _isLoadingLora ||
-                        _isLoadingTaesd ||
-                        _isGeneratingImage
-                    ? null
-                    : (value) =>
-                        setState(() => _seed = int.tryParse(value) ?? -1),
-              ),
-              const SizedBox(height: 20),
-              if (_progressMessage.isNotEmpty)
-                Text(
-                  _progressMessage,
-                  style: const TextStyle(fontSize: 16),
                 ),
-              if (_totalTime.isNotEmpty)
-                Text(
-                  _totalTime,
-                  style: const TextStyle(fontSize: 16),
-                ),
-              const SizedBox(height: 20),
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  ElevatedButton(
-                    onPressed: _isInitializingModel ||
-                            _isLoadingLora ||
-                            _isLoadingTaesd ||
-                            _isGeneratingImage
-                        ? null
-                        : () {
-                            if (_processor != null) {
-                              print("Sending generation request to processor");
-                              setState(() {
-                                _message = 'Generating image...';
-                                _isGeneratingImage = true;
-                              });
-                              _processor!.generateImage(
-                                prompt: _promptController.text,
-                                negativePrompt: _negativePromptController.text,
-                                cfgScale: _cfgScale,
-                                sampleSteps: _steps,
-                                width: _width,
-                                height: _height,
-                                seed: _seed,
-                                sampleMethod: _selectedSampleMethod.index,
-                              );
-                            } else {
-                              print("Processor is null!");
-                            }
-                          },
-                    child: const Text('Generate Image'),
-                  ),
-                  if (_isGeneratingImage) const CircularProgressIndicator(),
-                ],
-              ),
-              if (_generatedImage != null) ...[
-                const SizedBox(height: 20),
-                _generatedImage!,
               ],
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Prompt'),
+              onChanged: (String? v) => setState(() => prompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Negative Prompt'),
+              onChanged: (String? v) =>
+                  setState(() => negativePrompt = v ?? ''),
+            ),
+            Row(
+              children: [
+                const Text('Sampling Method'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<String>(
+                    placeholder: const Text('euler_a'),
+                    options: samplingMethods
+                        .map((method) => ShadOption(
+                              value: method,
+                              child: Text(method),
+                            ))
+                        .toList(),
+                    selectedOptionBuilder: (context, value) => Text(value),
+                    onChanged: (String? value) =>
+                        setState(() => samplingMethod = value ?? 'euler_a'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Text('CFG'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSlider(
+                    initialValue: cfg,
+                    min: 1,
+                    max: 20,
+                    divisions: 38,
+                    onChanged: (v) => setState(() => cfg = v),
+                  ),
+                ),
+                Text(cfg.toStringAsFixed(1)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Text('Steps'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSlider(
+                    initialValue: steps.toDouble(),
+                    min: 1,
+                    max: 50,
+                    divisions: 49,
+                    onChanged: (v) => setState(() => steps = v.toInt()),
+                  ),
+                ),
+                Text(steps.toString()),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Text('Width'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<int>(
+                    placeholder: const Text('512'),
+                    options: getWidthOptions()
+                        .map((w) => ShadOption(
+                              value: w,
+                              child: Text(w.toString()),
+                            ))
+                        .toList(),
+                    selectedOptionBuilder: (context, value) =>
+                        Text(value.toString()),
+                    onChanged: (int? value) {
+                      if (value != null) setState(() => width = value);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 16),
+                const Text('Height'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<int>(
+                    placeholder: const Text('512'),
+                    options: getHeightOptions()
+                        .map((h) => ShadOption(
+                              value: h,
+                              child: Text(h.toString()),
+                            ))
+                        .toList(),
+                    selectedOptionBuilder: (context, value) =>
+                        Text(value.toString()),
+                    onChanged: (int? value) {
+                      if (value != null) setState(() => height = value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text('Seed (-1 for random)'),
+            const SizedBox(height: 8),
+            ShadInput(
+              placeholder: const Text('Seed'),
+              keyboardType: TextInputType.number,
+              onChanged: (String? v) => setState(() => seed = v ?? "-1"),
+              initialValue: seed,
+            ),
+            const SizedBox(height: 16),
+            ShadButton(
+              onPressed: () {
+                if (_processor != null) {
+                  setState(() {
+                    status = 'Generating image...';
+                    progress = 0;
+                  });
+
+                  _processor!.generateImage(
+                    prompt: prompt,
+                    negativePrompt: negativePrompt,
+                    cfgScale: cfg,
+                    sampleSteps: steps,
+                    width: width,
+                    height: height,
+                    seed: int.tryParse(seed) ?? -1,
+                    sampleMethod: SampleMethod.values
+                        .firstWhere(
+                          (method) =>
+                              method.displayName.toLowerCase() ==
+                              samplingMethod.toLowerCase(),
+                          orElse: () => SampleMethod.EULER_A,
+                        )
+                        .index,
+                  );
+                }
+              },
+              child: const Text('Generate'),
+            ),
+            const SizedBox(height: 16),
+            LinearProgressIndicator(
+              value: progress,
+              backgroundColor: theme.colorScheme.background,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(height: 8),
+            Text(status, style: theme.textTheme.p),
+            if (_generatedImage != null) ...[
+              const SizedBox(height: 20),
+              _generatedImage!,
             ],
-          ),
+          ],
         ),
       ),
     );

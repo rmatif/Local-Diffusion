@@ -1,5 +1,6 @@
 {
     "cody.autocomplete.languages": {
         "*": true
-    }
+    },
+    "cline.modelSettings.o3Mini.reasoningEffort": "high"
 }
