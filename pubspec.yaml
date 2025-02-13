@@ -41,7 +41,7 @@ dependencies:
   cupertino_icons: ^1.0.2
   flutter_launcher_icons: ^0.13.1
   image_picker: ^1.1.2
-  shadcn_ui: ^0.18.7
+  shadcn_ui: ^0.19.3
   flutter_animate: ^4.5.2
   lucide_icons_flutter: ^1.2.7
   url_launcher: ^6.3.1
