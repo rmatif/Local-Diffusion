@@ -50,7 +50,11 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   String _progressMessage = '';
   String _totalTime = '';
   int _cores = 0;
-
+  List<String> _loraNames = [];
+  final TextEditingController _promptController = TextEditingController();
+  final Map<String, OverlayEntry?> _overlayEntries = {};
+  final GlobalKey _promptFieldKey = GlobalKey();
+  final Map<String, GlobalKey> _loraKeys = {};
   // UI State variables
   bool useTAESD = false;
   bool useVAETiling = false;
@@ -750,19 +754,19 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   child: const Text('Load TAESD'),
                 ),
                 const SizedBox(width: 8),
+                // Update the TAESD checkbox onChanged handler:
                 ShadCheckbox(
                   value: useTAESD,
                   onChanged: (isModelLoading || isGenerating)
                       ? null
                       : (bool v) {
-                          if (_taesdPath == null) {
+                          if (useVAETiling && v) {
                             _showTemporaryError(
-                                'Please load TAESD model first');
+                                'TAESD is incompatible with VAE Tiling');
                             return;
                           }
                           setState(() {
                             useTAESD = v;
-                            // Reinitialize processor if it exists
                             if (_processor != null) {
                               String currentModelPath = _processor!.modelPath;
                               bool currentFlashAttention =
@@ -807,7 +811,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                         const SizedBox(height: 16),
                         Row(
                           children: [
-                            Expanded(
+                            SizedBox(
+                              width: 120,
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
@@ -818,13 +823,31 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                                           initialDirectory: modelDirPath);
 
                                   if (selectedDir != null) {
+                                    final directory = Directory(selectedDir);
+                                    final files = directory.listSync();
+                                    final loraFiles = files
+                                        .whereType<File>()
+                                        .where((file) =>
+                                            file.path
+                                                .endsWith('.safetensors') ||
+                                            file.path.endsWith('.pt') ||
+                                            file.path.endsWith('.ckpt') ||
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith('.pth'))
+                                        .toList();
+
                                     setState(() {
                                       _loraPath = selectedDir;
                                       loadedComponents['LORA'] = true;
-                                      _loraMessage =
-                                          "LORA directory loaded: ${selectedDir.split('/').last}";
+                                      // Store full list of lora names
+                                      _loraNames = loraFiles
+                                          .map((file) => file.path
+                                              .split('/')
+                                              .last
+                                              .split('.')
+                                              .first)
+                                          .toList();
 
-                                      // Reinitialize processor if it exists
                                       if (_processor != null) {
                                         String currentModelPath =
                                             _processor!.modelPath;
@@ -848,6 +871,108 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                                 child: const Text('Load Lora'),
                               ),
                             ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: _loraNames.map((name) {
+                                  // Create a key for each Lora name if it doesn't exist
+                                  _loraKeys[name] ??= GlobalKey();
+
+                                  return InkWell(
+                                    key: _loraKeys[name],
+                                    onTap: () {
+                                      final loraTag = "<lora:$name:0.7>";
+
+                                      final RenderBox clickedItem =
+                                          _loraKeys[name]!
+                                              .currentContext!
+                                              .findRenderObject() as RenderBox;
+                                      final Offset startPosition = clickedItem
+                                          .localToGlobal(Offset.zero);
+
+                                      final RenderBox promptField =
+                                          _promptFieldKey.currentContext!
+                                              .findRenderObject() as RenderBox;
+                                      final Offset targetPosition = promptField
+                                          .localToGlobal(Offset.zero);
+
+                                      late final OverlayEntry entry;
+                                      entry = OverlayEntry(
+                                        builder: (context) => Stack(
+                                          children: [
+                                            TweenAnimationBuilder<double>(
+                                              duration: const Duration(
+                                                  milliseconds: 500),
+                                              curve: Curves.easeInOut,
+                                              tween:
+                                                  Tween(begin: 0.0, end: 1.0),
+                                              onEnd: () {
+                                                setState(() {
+                                                  prompt = prompt.isEmpty
+                                                      ? loraTag
+                                                      : "$prompt $loraTag";
+                                                  _promptController.text =
+                                                      prompt;
+                                                  _promptController.selection =
+                                                      TextSelection
+                                                          .fromPosition(
+                                                    TextPosition(
+                                                        offset:
+                                                            _promptController
+                                                                .text.length),
+                                                  );
+                                                });
+                                                entry.remove();
+                                              },
+                                              builder: (context, value, child) {
+                                                return Positioned(
+                                                  left: startPosition.dx,
+                                                  top: startPosition.dy +
+                                                      (targetPosition.dy -
+                                                              startPosition
+                                                                  .dy) *
+                                                          value,
+                                                  child: Opacity(
+                                                    opacity: 1 - (value * 0.2),
+                                                    child: Material(
+                                                      color: Colors.transparent,
+                                                      child: Text(
+                                                        loraTag,
+                                                        style:
+                                                            theme.textTheme.p,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      );
+
+                                      Overlay.of(context).insert(entry);
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.primary
+                                            .withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        name,
+                                        style: theme.textTheme.p.copyWith(
+                                          fontSize: 13, // Reduced font size
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            )
                           ],
                         ),
                         const SizedBox(height: 16),
@@ -1638,7 +1763,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
             ),
             const SizedBox(height: 16),
             ShadInput(
+              key: _promptFieldKey,
               placeholder: const Text('Prompt'),
+              controller: _promptController,
               onChanged: (String? v) => setState(() => prompt = v ?? ''),
             ),
             const SizedBox(height: 16),
