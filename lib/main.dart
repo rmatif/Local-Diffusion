@@ -7,6 +7,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'ffi_bindings.dart';
 import 'stable_diffusion_processor.dart';
+import 'upscaler_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -501,6 +502,68 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
         backgroundColor: theme.colorScheme.background,
         elevation: 0,
       ),
+      drawer: Drawer(
+        width: 240, // Reduced width from default 304
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.horizontal(
+              right: Radius.circular(4)), // Less round borders
+        ),
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            const DrawerHeader(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.fromRGBO(24, 89, 38, 1), // Teal
+                    Color.fromARGB(255, 59, 128, 160), // Blue
+                    Color(0xFF0a2335), // Dark Blue
+                  ],
+                ),
+              ),
+              child: Text(
+                'Menu',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.type, size: 32),
+              title: const Text(
+                'Text to Image',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.imageUpscale, size: 32),
+              title: const Text(
+                'Upscaler',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              // In the Drawer's Upscaler ListTile onTap handler:
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const UpscalerPage()),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -527,7 +590,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                                     ),
                                     const WidgetSpan(
                                       child: Icon(
-                                        LucideIcons.check,
+                                        Icons.check,
                                         size: 20,
                                         color: Colors.green,
                                       ),

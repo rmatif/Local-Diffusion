@@ -165,6 +165,19 @@ class FFIBindings {
   static final freeSdCtx = _lib.lookupFunction<Void Function(Pointer<Void>),
       void Function(Pointer<Void>)>('free_sd_ctx', isLeaf: false);
 
+  static final newUpscalerCtx = _lib.lookupFunction<
+      Pointer<Void> Function(Pointer<Utf8>, Int32, Int32),
+      Pointer<Void> Function(
+          Pointer<Utf8>, int, int)>('new_upscaler_ctx', isLeaf: false);
+
+  static final freeUpscalerCtx = _lib.lookupFunction<
+      Void Function(Pointer<Void>),
+      void Function(Pointer<Void>)>('free_upscaler_ctx', isLeaf: false);
+
+  static final upscale = _lib.lookupFunction<
+      SDImage Function(Pointer<Void>, SDImage, Uint32),
+      SDImage Function(Pointer<Void>, SDImage, int)>('upscale', isLeaf: false);
+
   static final txt2img = _lib.lookupFunction<
       Pointer<SDImage> Function(
           Pointer<Void>,
