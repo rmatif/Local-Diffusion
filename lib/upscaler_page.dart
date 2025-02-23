@@ -12,6 +12,8 @@ import 'upscaler_processor.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:before_after/before_after.dart';
+import 'img2img_page.dart';
+import 'main.dart';
 
 class UpscalerPage extends StatefulWidget {
   const UpscalerPage({super.key});
@@ -308,7 +310,30 @@ class _UpscalerPageState extends State<UpscalerPage> {
                     _processor = null;
                   }
                   Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const StableDiffusionApp()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(LucideIcons.images, size: 32),
+                title: const Text(
+                  'Image to Image',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                onTap: () {
+                  if (_processor != null) {
+                    _processor!.dispose();
+                    _processor = null;
+                  }
                   Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const Img2ImgPage()),
+                  );
                 },
               ),
               ListTile(
@@ -385,7 +410,7 @@ class _UpscalerPageState extends State<UpscalerPage> {
                                     CrossAxisAlignment.center, // Added this
                                 children: [
                                   Icon(
-                                    LucideIcons.image,
+                                    Icons.add_photo_alternate,
                                     size: 64,
                                     color: theme.colorScheme.primary
                                         .withOpacity(0.5),
