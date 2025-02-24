@@ -9,6 +9,7 @@ import 'ffi_bindings.dart';
 import 'stable_diffusion_processor.dart';
 import 'upscaler_page.dart';
 import 'img2img_page.dart';
+import 'photomaker_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -576,6 +577,23 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const UpscalerPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.aperture, size: 32),
+              title: const Text('Photomaker',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const PhotomakerPage()),
                 );
               },
             ),

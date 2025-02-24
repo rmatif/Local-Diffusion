@@ -66,6 +66,7 @@ class StableDiffusionProcessor {
   final String? t5xxlPath;
   final String? vaePath;
   final String? embedDirPath;
+  final String? stackedIdEmbedDir;
   final int clipSkip;
   final bool vaeTiling;
 
@@ -96,6 +97,7 @@ class StableDiffusionProcessor {
     this.t5xxlPath,
     this.vaePath,
     this.embedDirPath,
+    this.stackedIdEmbedDir, // Add this parameter
     this.clipSkip = 1,
     this.vaeTiling = false,
   }) {
@@ -140,9 +142,7 @@ class StableDiffusionProcessor {
     try {
       _sdIsolate = await Isolate.spawn(
         _isolateEntryPoint,
-        {
-          'port': _receivePort.sendPort,
-        },
+        {'port': _receivePort.sendPort},
       );
 
       _receivePort.listen((message) async {
@@ -162,6 +162,7 @@ class StableDiffusionProcessor {
             't5xxlPath': t5xxlPath,
             'vaePath': vaePath,
             'embedDirPath': embedDirPath,
+            'stackedIdEmbedDir': stackedIdEmbedDir, // Add this
             'clipSkip': clipSkip,
             'vaeTiling': vaeTiling,
           });
@@ -254,6 +255,11 @@ class StableDiffusionProcessor {
                       message['taesdPath'] != null)
                   ? message['taesdPath'].toString().toNativeUtf8()
                   : emptyUtf8;
+              final stackedIdEmbedDirUtf8 =
+                  message['stackedIdEmbedDir'] != null &&
+                          message['stackedIdEmbedDir'].toString().isNotEmpty
+                      ? message['stackedIdEmbedDir'].toString().toNativeUtf8()
+                      : "".toNativeUtf8();
               final embedDirUtf8 = message['embedDirPath'] != null &&
                       message['embedDirPath'].toString().isNotEmpty
                   ? message['embedDirPath'].toString().toNativeUtf8()
@@ -267,23 +273,23 @@ class StableDiffusionProcessor {
                 clipLPathUtf8,
                 clipGPathUtf8,
                 t5xxlPathUtf8,
-                emptyUtf8, //diffusion_model_path, not used
+                emptyUtf8,
                 vaePathUtf8,
                 taesdPathUtf8,
-                emptyUtf8, //control_net_path_c_str, not used
+                emptyUtf8,
                 loraDirUtf8,
                 embedDirUtf8,
-                emptyUtf8, //stacked_id_embed_dir_c_str, not used
+                stackedIdEmbedDirUtf8, // Add this
                 message['useFlashAttention'],
                 message['vaeTiling'],
-                false, //free_params_immediately, not used
+                false,
                 FFIBindings.getCores() * 2,
                 mapModelTypeToIndex(SDType.values[message['modelType']]),
-                0, //rng_type, not used
+                0,
                 message['schedule'],
-                false, //keep_clip_on_cpu, not used
-                false, //keep_control_net_cpu, not used
-                false, //keep_vae_on_cpu, not used
+                false,
+                false,
+                false,
                 message['clipSkip'],
               );
 
@@ -294,7 +300,9 @@ class StableDiffusionProcessor {
               calloc.free(t5xxlPathUtf8);
               calloc.free(vaePathUtf8);
               calloc.free(embedDirUtf8);
-
+              if (stackedIdEmbedDirUtf8 != emptyUtf8) {
+                calloc.free(stackedIdEmbedDirUtf8);
+              }
               if (message['useTinyAutoencoder'] &&
                   message['taesdPath'] != null &&
                   taesdPathUtf8 != emptyUtf8) {
@@ -319,10 +327,16 @@ class StableDiffusionProcessor {
           case 'generate':
             if (ctx != null) {
               print("Starting image generation with context: ${ctx!.address}");
+              print("cfgScale: ${message['cfgScale']}");
+              print("guidance: ${message['guidance']}");
+              print("styleStrength: ${message['styleStrength']}");
               try {
                 final promptUtf8 = message['prompt'].toString().toNativeUtf8();
                 final negPromptUtf8 =
                     message['negativePrompt'].toString().toNativeUtf8();
+                final inputIdImagesPathUtf8 =
+                    message['inputIdImagesPath'].toString().toNativeUtf8();
+                final styleStrength = message['styleStrength'];
                 final emptyUtf8 = "".toNativeUtf8();
 
                 final result = FFIBindings.txt2img(
@@ -339,14 +353,15 @@ class StableDiffusionProcessor {
                   message['seed'],
                   message['batchCount'],
                   nullptr,
-                  1.0,
-                  1.0,
+                  0.0,
+                  styleStrength,
                   false,
-                  emptyUtf8,
+                  inputIdImagesPathUtf8,
                 );
 
                 calloc.free(promptUtf8);
                 calloc.free(negPromptUtf8);
+                calloc.free(inputIdImagesPathUtf8);
                 calloc.free(emptyUtf8);
 
                 print("Generation result address: ${result.address}");
@@ -414,6 +429,8 @@ class StableDiffusionProcessor {
     int sampleSteps = 20,
     int seed = 42,
     int batchCount = 1,
+    String? inputIdImagesPath,
+    double styleStrength = 1.0,
   }) async {
     _loadingController.add(true);
     try {
@@ -435,6 +452,8 @@ class StableDiffusionProcessor {
         'sampleSteps': sampleSteps,
         'seed': seed,
         'batchCount': batchCount,
+        'inputIdImagesPath': inputIdImagesPath ?? '',
+        'styleStrength': styleStrength,
       });
     } finally {
       _loadingController.add(false);

@@ -14,6 +14,7 @@ import 'package:dotted_border/dotted_border.dart';
 import 'package:before_after/before_after.dart';
 import 'img2img_page.dart';
 import 'main.dart';
+import 'photomaker_page.dart';
 
 class UpscalerPage extends StatefulWidget {
   const UpscalerPage({super.key});
@@ -343,6 +344,23 @@ class _UpscalerPageState extends State<UpscalerPage> {
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 onTap: () => Navigator.pop(context),
+              ),
+              ListTile(
+                leading: const Icon(LucideIcons.aperture, size: 32),
+                title: const Text('Photomaker',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                onTap: () {
+                  if (_processor != null) {
+                    _processor!.dispose();
+                    _processor = null;
+                  }
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const PhotomakerPage()),
+                  );
+                },
               ),
             ],
           ),
