@@ -58,7 +58,7 @@ Other Quantization method can be implemented if really needed.
 
 - [ ] Vulkan backend for GPU acceleration
 - [ ] ControlNet support
-- [✓] img2img generation
+- [x] img2img generation
 - [ ] inpainting/outpainting
 - [x] RealESRGAN upscaling
 - [ ] iOS support
