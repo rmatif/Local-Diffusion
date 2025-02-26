@@ -178,6 +178,7 @@ class FFIBindings {
       SDImage Function(Pointer<Void>, SDImage, Uint32),
       SDImage Function(Pointer<Void>, SDImage, int)>('upscale', isLeaf: false);
 
+  // Around line 135 in lib/ffi_bindings.dart (before txt2img binding)
   static final txt2img = _lib.lookupFunction<
       Pointer<SDImage> Function(
           Pointer<Void>,
@@ -192,8 +193,8 @@ class FFIBindings {
           Int32,
           Int64,
           Int32,
-          Pointer<Void>,
-          Float,
+          Pointer<SDImage>, // Added for control_cond
+          Float, // Added for control_strength
           Float,
           Bool,
           Pointer<Utf8>),
@@ -210,11 +211,18 @@ class FFIBindings {
           int,
           int,
           int,
-          Pointer<Void>,
-          double,
+          Pointer<SDImage>, // Added for control_cond
+          double, // Added for control_strength
           double,
           bool,
           Pointer<Utf8>)>('txt2img', isLeaf: false);
+
+// Add preprocess_canny binding around line 200 (after upscale binding)
+  static final preprocessCanny = _lib.lookupFunction<
+      Pointer<Uint8> Function(
+          Pointer<Uint8>, Int32, Int32, Float, Float, Float, Float, Bool),
+      Pointer<Uint8> Function(Pointer<Uint8>, int, int, double, double, double,
+          double, bool)>('preprocess_canny', isLeaf: false);
 
   static final img2img = _lib.lookupFunction<
       Pointer<SDImage> Function(
@@ -232,8 +240,8 @@ class FFIBindings {
           Float,
           Int64,
           Int32,
-          Pointer<SDImage>,
-          Float,
+          Pointer<SDImage>, // control_cond
+          Float, // control_strength
           Float,
           Bool,
           Pointer<Utf8>),
@@ -252,8 +260,8 @@ class FFIBindings {
           double,
           int,
           int,
-          Pointer<SDImage>,
-          double,
+          Pointer<SDImage>, // control_cond
+          double, // control_strength
           double,
           bool,
           Pointer<Utf8>)>('img2img', isLeaf: false);

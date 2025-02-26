@@ -68,7 +68,11 @@ class Img2ImgProcessor {
   final String? embedDirPath;
   final int clipSkip;
   final bool vaeTiling;
-
+  final String? controlNetPath; // Add this
+  final Uint8List? controlImageData; // Add this
+  final int? controlImageWidth; // Add this
+  final int? controlImageHeight;
+  final double controlStrength;
   late Isolate _sdIsolate;
   late SendPort _sdSendPort;
   final Completer _uninitialized = Completer();
@@ -98,6 +102,11 @@ class Img2ImgProcessor {
     this.embedDirPath,
     this.clipSkip = 1,
     this.vaeTiling = false,
+    this.controlNetPath, // Add this
+    this.controlImageData, // Add this
+    this.controlImageWidth, // Add this
+    this.controlImageHeight, // Add this
+    this.controlStrength = 0.9,
   }) {
     _initializeIsolate();
   }
@@ -164,6 +173,7 @@ class Img2ImgProcessor {
             'embedDirPath': embedDirPath,
             'clipSkip': clipSkip,
             'vaeTiling': vaeTiling,
+            'controlNetPath': controlNetPath,
           });
         } else if (message is Map) {
           if (message['type'] == 'modelLoaded') {
@@ -257,6 +267,10 @@ class Img2ImgProcessor {
                       message['embedDirPath'].toString().isNotEmpty
                   ? message['embedDirPath'].toString().toNativeUtf8()
                   : "".toNativeUtf8();
+              final controlNetPathUtf8 = message['controlNetPath'] != null &&
+                      message['controlNetPath'].toString().isNotEmpty
+                  ? message['controlNetPath'].toString().toNativeUtf8()
+                  : "".toNativeUtf8();
 
               ctx = FFIBindings.newSdCtx(
                 modelPathUtf8,
@@ -266,7 +280,7 @@ class Img2ImgProcessor {
                 emptyUtf8, // diffusion_model_path, not used
                 vaePathUtf8,
                 taesdPathUtf8,
-                emptyUtf8, // control_net_path_c_str, not used
+                controlNetPathUtf8, // control_net_path_c_str, not used
                 loraDirUtf8,
                 embedDirUtf8,
                 emptyUtf8, // stacked_id_embed_dir_c_str, not used
@@ -290,7 +304,7 @@ class Img2ImgProcessor {
               calloc.free(t5xxlPathUtf8);
               calloc.free(vaePathUtf8);
               calloc.free(embedDirUtf8);
-
+              calloc.free(controlNetPathUtf8);
               if (message['useTinyAutoencoder'] &&
                   message['taesdPath'] != null &&
                   taesdPathUtf8 != emptyUtf8) {
@@ -340,6 +354,26 @@ class Img2ImgProcessor {
                 final negPromptUtf8 =
                     message['negativePrompt'].toString().toNativeUtf8();
                 final emptyUtf8 = "".toNativeUtf8();
+                Pointer<SDImage>? controlCondPtr;
+                if (message['controlImageData'] != null) {
+                  final controlImageData =
+                      message['controlImageData'] as Uint8List;
+                  final controlWidth = message['controlImageWidth'] as int;
+                  final controlHeight = message['controlImageHeight'] as int;
+                  final controlDataPtr = malloc<Uint8>(controlImageData.length);
+                  controlDataPtr
+                      .asTypedList(controlImageData.length)
+                      .setAll(0, controlImageData);
+
+                  // In the _isolateEntryPoint function, modify the code for Canny processing:
+
+                  controlCondPtr = malloc<SDImage>();
+                  controlCondPtr.ref
+                    ..width = controlWidth
+                    ..height = controlHeight
+                    ..channel = 3
+                    ..data = controlDataPtr;
+                }
 
                 final result = FFIBindings.img2img(
                   ctx!,
@@ -356,9 +390,9 @@ class Img2ImgProcessor {
                   message['strength'],
                   message['seed'],
                   message['batchCount'],
-                  nullptr, // control_cond, not used
-                  0.0, // control_strength
-                  0.0, // style_strength
+                  controlCondPtr ?? nullptr, // Pass ControlNet image
+                  message['controlStrength'] ?? 0.0,
+                  0.0,
                   false, // normalize_input
                   emptyUtf8, // input_id_images_path
                 );
@@ -437,6 +471,10 @@ class Img2ImgProcessor {
     double strength = 0.5,
     int seed = 42,
     int batchCount = 1,
+    Uint8List? controlImageData, // Add this
+    int? controlImageWidth, // Add this
+    int? controlImageHeight, // Add this
+    double controlStrength = 0.9,
   }) async {
     _loadingController.add(true);
     try {
@@ -460,6 +498,10 @@ class Img2ImgProcessor {
         'strength': strength,
         'seed': seed,
         'batchCount': batchCount,
+        'controlImageData': controlImageData,
+        'controlImageWidth': controlImageWidth,
+        'controlImageHeight': controlImageHeight,
+        'controlStrength': controlStrength,
       });
     } finally {
       _loadingController.add(false);

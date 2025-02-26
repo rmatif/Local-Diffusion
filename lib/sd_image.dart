@@ -11,4 +11,6 @@ base class SDImage extends Struct {
   external int channel;
 
   external Pointer<Uint8> data;
+
+  external Pointer<Void> userdata;
 }

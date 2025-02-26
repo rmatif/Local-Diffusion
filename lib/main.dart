@@ -1,5 +1,8 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:developer' as developer;
@@ -10,6 +13,8 @@ import 'stable_diffusion_processor.dart';
 import 'upscaler_page.dart';
 import 'img2img_page.dart';
 import 'photomaker_page.dart';
+import 'package:image/image.dart' as img;
+import 'canny_processor.dart';
 
 void main() {
   runApp(const MyApp());
@@ -97,6 +102,19 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   String? _t5xxlPath;
   String? _vaePath;
   String? _embedDirPath;
+  String? _controlNetPath; // Add this
+  File? _controlImage; // Add this
+  Uint8List? _controlRgbBytes; // Add this
+  int? _controlWidth; // Add this
+  int? _controlHeight; // Add this
+  bool useControlNet = false; // Add this
+  bool useControlImage = false; // Add this
+  bool useCanny = false; // Add this
+  double controlStrength = 0.9;
+  CannyProcessor? _cannyProcessor;
+  bool isCannyProcessing = false;
+  Image? _cannyImage;
+
   final List<String> samplingMethods = const [
     'euler_a',
     'euler',
@@ -126,6 +144,22 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   void initState() {
     super.initState();
     _cores = FFIBindings.getCores() * 2;
+    _cannyProcessor = CannyProcessor();
+    _cannyProcessor!.init();
+
+    _cannyProcessor!.loadingStream.listen((loading) {
+      setState(() {
+        isCannyProcessing = loading;
+      });
+    });
+
+    _cannyProcessor!.imageStream.listen((image) async {
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      setState(() {
+        _cannyImage = Image.memory(bytes!.buffer.asUint8List());
+      });
+    });
   }
 
   @override
@@ -133,6 +167,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     _errorMessageTimer?.cancel();
     _modelErrorTimer?.cancel();
     _processor?.dispose();
+    _cannyProcessor?.dispose();
     super.dispose();
   }
 
@@ -142,6 +177,72 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       await directory.create(recursive: true);
     }
     return directory.path;
+  }
+
+  Uint8List _ensureRgbFormat(Uint8List bytes, int width, int height) {
+    // If the bytes length matches a 3-channel image, assume it's already in RGB format
+    if (bytes.length == width * height * 3) {
+      return bytes;
+    }
+
+    // If it's a grayscale image (1 channel)
+    if (bytes.length == width * height) {
+      final rgbBytes = Uint8List(width * height * 3);
+      for (int i = 0; i < width * height; i++) {
+        // Convert grayscale to RGB by duplicating the value to all channels
+        rgbBytes[i * 3] = bytes[i];
+        rgbBytes[i * 3 + 1] = bytes[i];
+        rgbBytes[i * 3 + 2] = bytes[i];
+      }
+      return rgbBytes;
+    }
+
+    // If it's already in a different format, log the issue
+    print(
+        "Warning: Unexpected image format. Expected 1 or 3 channels, got: ${bytes.length / (width * height)} channels");
+
+    // As a fallback, try to interpret it as is
+    return bytes;
+  }
+
+  Future<void> _processCannyImage() async {
+    if (_controlImage == null) return;
+
+    final bytes = await _controlImage!.readAsBytes();
+    final decodedImage = img.decodeImage(bytes);
+
+    if (decodedImage == null) {
+      _showTemporaryError('Failed to decode image');
+      return;
+    }
+
+    // Convert to RGB format (3 channels)
+    final rgbBytes = Uint8List(decodedImage.width * decodedImage.height * 3);
+    int rgbIndex = 0;
+
+    for (int y = 0; y < decodedImage.height; y++) {
+      for (int x = 0; x < decodedImage.width; x++) {
+        final pixel = decodedImage.getPixel(x, y);
+        rgbBytes[rgbIndex] = pixel.r.toInt();
+        rgbBytes[rgbIndex + 1] = pixel.g.toInt();
+        rgbBytes[rgbIndex + 2] = pixel.b.toInt();
+        rgbIndex += 3;
+      }
+    }
+
+    // Process with Canny
+    await _cannyProcessor!.processImage(
+      rgbBytes,
+      decodedImage.width,
+      decodedImage.height,
+      CannyParameters(
+        highThreshold: 100.0,
+        lowThreshold: 50.0,
+        weak: 1.0,
+        strong: 255.0,
+        inverse: false,
+      ),
+    );
   }
 
   void _initializeProcessor(String modelPath, bool useFlashAttention,
@@ -166,6 +267,11 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       embedDirPath: _embedDirPath,
       clipSkip: clipSkip.toInt(),
       vaeTiling: useVAETiling,
+      controlNetPath: _controlNetPath, // Add this
+      controlImageData: _controlRgbBytes, // Add this
+      controlImageWidth: _controlWidth, // Add this
+      controlImageHeight: _controlHeight, // Add this // Add this
+      controlStrength: controlStrength, // Add this
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -1873,6 +1979,425 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Text('Use ControlNet'),
+                const SizedBox(width: 8),
+                ShadSwitch(
+                  value: useControlNet,
+                  onChanged: (bool v) {
+                    setState(() {
+                      useControlNet = v;
+                      // Only reinitialize if processor is already loaded
+                      if (_processor != null) {
+                        String currentModelPath = _processor!.modelPath;
+                        bool currentFlashAttention =
+                            _processor!.useFlashAttention;
+                        SDType currentModelType = _processor!.modelType;
+                        Schedule currentSchedule = _processor!.schedule;
+
+                        // If ControlNet is turned off, we'll set the controlNetPath to null temporarily
+                        // before reinitializing the processor
+                        String? originalControlNetPath = _controlNetPath;
+                        if (!v) {
+                          _controlNetPath = null;
+                        }
+
+                        _initializeProcessor(
+                          currentModelPath,
+                          currentFlashAttention,
+                          currentModelType,
+                          currentSchedule,
+                        );
+
+                        // Restore the original path after reinitialization
+                        if (!v) {
+                          _controlNetPath = originalControlNetPath;
+                        }
+                      }
+                    });
+                  },
+                ),
+              ],
+            ),
+            if (useControlNet) ...[
+              const SizedBox(height: 16),
+              ShadAccordion<Map<String, dynamic>>(
+                children: [
+                  // Replace the ControlNet options section with this improved version
+                  ShadAccordionItem<Map<String, dynamic>>(
+                    value: const {},
+                    title: const Text('ControlNet Options'),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment
+                            .start, // Align children to the left
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                // Made the button expand to full width to prevent overflow
+                                child: ShadButton(
+                                  enabled: !(isModelLoading || isGenerating),
+                                  onPressed: () async {
+                                    final modelDirPath =
+                                        await getModelDirectory();
+                                    final selectedDir = await FilePicker
+                                        .platform
+                                        .getDirectoryPath(
+                                            initialDirectory: modelDirPath);
+
+                                    if (selectedDir != null) {
+                                      final directory = Directory(selectedDir);
+                                      final files = directory.listSync();
+                                      final controlNetFiles = files
+                                          .whereType<File>()
+                                          .where((file) =>
+                                              file.path
+                                                  .endsWith('.safetensors') ||
+                                              file.path.endsWith('.bin') ||
+                                              file.path.endsWith('.pth') ||
+                                              file.path.endsWith('.ckpt'))
+                                          .toList();
+
+                                      if (controlNetFiles.isNotEmpty) {
+                                        final selectedControlNet =
+                                            await showShadDialog<String>(
+                                          context: context,
+                                          builder: (BuildContext context) {
+                                            return ShadDialog.alert(
+                                              constraints: const BoxConstraints(
+                                                  maxWidth: 400),
+                                              title: const Text(
+                                                  'Select ControlNet Model'),
+                                              description: SizedBox(
+                                                height: 300,
+                                                child: Material(
+                                                  color: Colors.transparent,
+                                                  child: ShadTable.list(
+                                                    header: const [
+                                                      ShadTableCell.header(
+                                                          child: Text('Model',
+                                                              style: TextStyle(
+                                                                  fontSize:
+                                                                      16))),
+                                                      ShadTableCell.header(
+                                                          alignment: Alignment
+                                                              .centerRight,
+                                                          child: Text('Size',
+                                                              style: TextStyle(
+                                                                  fontSize:
+                                                                      16))),
+                                                    ],
+                                                    columnSpanExtent: (index) {
+                                                      if (index == 0)
+                                                        return const FixedTableSpanExtent(
+                                                            250);
+                                                      if (index == 1)
+                                                        return const FixedTableSpanExtent(
+                                                            80);
+                                                      return null;
+                                                    },
+                                                    children: controlNetFiles
+                                                        .asMap()
+                                                        .entries
+                                                        .map((entry) => [
+                                                              ShadTableCell(
+                                                                child:
+                                                                    GestureDetector(
+                                                                  onTap: () => Navigator.pop(
+                                                                      context,
+                                                                      entry
+                                                                          .value
+                                                                          .path),
+                                                                  child:
+                                                                      Padding(
+                                                                    padding: const EdgeInsets
+                                                                        .symmetric(
+                                                                        vertical:
+                                                                            12.0),
+                                                                    child: Text(
+                                                                      entry
+                                                                          .value
+                                                                          .path
+                                                                          .split(
+                                                                              '/')
+                                                                          .last,
+                                                                      style: const TextStyle(
+                                                                          fontWeight: FontWeight
+                                                                              .w500,
+                                                                          fontSize:
+                                                                              14),
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                              ShadTableCell(
+                                                                alignment: Alignment
+                                                                    .centerRight,
+                                                                child:
+                                                                    GestureDetector(
+                                                                  onTap: () => Navigator.pop(
+                                                                      context,
+                                                                      entry
+                                                                          .value
+                                                                          .path),
+                                                                  child: Text(
+                                                                    '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
+                                                                    style: const TextStyle(
+                                                                        fontSize:
+                                                                            12),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ])
+                                                        .toList(),
+                                                  ),
+                                                ),
+                                              ),
+                                              actions: [
+                                                ShadButton.outline(
+                                                  onPressed: () =>
+                                                      Navigator.pop(context),
+                                                  child: const Text('Cancel'),
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        );
+
+                                        if (selectedControlNet != null) {
+                                          setState(() {
+                                            _controlNetPath =
+                                                selectedControlNet;
+                                            loadedComponents['ControlNet'] =
+                                                true;
+                                            if (_processor != null) {
+                                              String currentModelPath =
+                                                  _processor!.modelPath;
+                                              bool currentFlashAttention =
+                                                  _processor!.useFlashAttention;
+                                              SDType currentModelType =
+                                                  _processor!.modelType;
+                                              Schedule currentSchedule =
+                                                  _processor!.schedule;
+                                              _initializeProcessor(
+                                                currentModelPath,
+                                                currentFlashAttention,
+                                                currentModelType,
+                                                currentSchedule,
+                                              );
+                                            }
+                                          });
+                                        }
+                                      }
+                                    }
+                                  },
+                                  child: const Text('Load ControlNet'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          // Left-aligned checkbox for "Use Image Reference"
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: ShadCheckbox(
+                              value: useControlImage,
+                              onChanged: (bool v) {
+                                setState(() {
+                                  useControlImage = v;
+                                  if (!v) {
+                                    _controlImage = null;
+                                    _controlRgbBytes = null;
+                                    _controlWidth = null;
+                                    _controlHeight = null;
+                                  }
+                                });
+                              },
+                              label: const Text('Use Image Reference'),
+                            ),
+                          ),
+                          if (useControlImage) ...[
+                            const SizedBox(height: 16),
+                            GestureDetector(
+                              onTap: (isModelLoading || isGenerating)
+                                  ? null
+                                  : () async {
+                                      final picker = ImagePicker();
+                                      final pickedFile = await picker.pickImage(
+                                          source: ImageSource.gallery);
+
+                                      if (pickedFile != null) {
+                                        final bytes =
+                                            await pickedFile.readAsBytes();
+                                        final decodedImage =
+                                            img.decodeImage(bytes);
+
+                                        if (decodedImage == null) {
+                                          _showTemporaryError(
+                                              'Failed to decode image');
+                                          return;
+                                        }
+
+                                        final rgbBytes = Uint8List(
+                                            decodedImage.width *
+                                                decodedImage.height *
+                                                3);
+                                        int rgbIndex = 0;
+
+                                        for (int y = 0;
+                                            y < decodedImage.height;
+                                            y++) {
+                                          for (int x = 0;
+                                              x < decodedImage.width;
+                                              x++) {
+                                            final pixel =
+                                                decodedImage.getPixel(x, y);
+                                            rgbBytes[rgbIndex] =
+                                                pixel.r.toInt();
+                                            rgbBytes[rgbIndex + 1] =
+                                                pixel.g.toInt();
+                                            rgbBytes[rgbIndex + 2] =
+                                                pixel.b.toInt();
+                                            rgbIndex += 3;
+                                          }
+                                        }
+
+                                        setState(() {
+                                          _controlImage = File(pickedFile.path);
+                                          _controlRgbBytes = rgbBytes;
+                                          _controlWidth = decodedImage.width;
+                                          _controlHeight = decodedImage.height;
+                                        });
+                                      }
+                                    },
+                              child: DottedBorder(
+                                borderType: BorderType.RRect,
+                                radius: const Radius.circular(8),
+                                color:
+                                    theme.colorScheme.primary.withOpacity(0.5),
+                                strokeWidth: 2,
+                                dashPattern: const [8, 4],
+                                child: Container(
+                                  height: 200,
+                                  width: double.infinity,
+                                  child: Center(
+                                    child: _controlImage == null
+                                        ? Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.add_photo_alternate,
+                                                size: 64,
+                                                color: theme.colorScheme.primary
+                                                    .withOpacity(0.5),
+                                              ),
+                                              const SizedBox(height: 12),
+                                              Text(
+                                                'Load control image',
+                                                style: TextStyle(
+                                                    color: theme
+                                                        .colorScheme.primary
+                                                        .withOpacity(0.5),
+                                                    fontSize: 16),
+                                              ),
+                                            ],
+                                          )
+                                        : Image.file(_controlImage!,
+                                            fit: BoxFit.contain),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            // Left-aligned checkbox for "Use Canny"
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Row(
+                                children: [
+                                  ShadCheckbox(
+                                    value: useCanny,
+                                    onChanged: (_controlImage == null ||
+                                            isModelLoading ||
+                                            isGenerating ||
+                                            isCannyProcessing)
+                                        ? null
+                                        : (bool v) {
+                                            setState(() {
+                                              useCanny = v;
+                                              if (v && _controlImage != null) {
+                                                // Process the image with Canny
+                                                _processCannyImage();
+                                              }
+                                            });
+                                          },
+                                    label: const Text('Use Canny'),
+                                  ),
+                                  if (isCannyProcessing)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 8.0),
+                                      child: SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            if (useCanny && _cannyImage != null) ...[
+                              const SizedBox(height: 16),
+                              const Text('Canny Edge Detection Result',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                      color: theme.colorScheme.primary
+                                          .withOpacity(0.5)),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                height: 200,
+                                width: double.infinity,
+                                child: Center(
+                                  child: _cannyImage!,
+                                ),
+                              ),
+                            ],
+                          ],
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              const Text('Control Strength'),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ShadSlider(
+                                  initialValue: controlStrength,
+                                  min: 0.0,
+                                  max: 1.0,
+                                  divisions: 20,
+                                  onChanged: (v) =>
+                                      setState(() => controlStrength = v),
+                                ),
+                              ),
+                              Text(controlStrength.toStringAsFixed(2)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             Row(
               children: [
                 const Text('Sampling Method'),
@@ -2000,7 +2525,6 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   status = 'Generating image...';
                   progress = 0;
                 });
-
                 _processor!.generateImage(
                   prompt: prompt,
                   negativePrompt: negativePrompt,
@@ -2017,6 +2541,22 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                         orElse: () => SampleMethod.EULER_A,
                       )
                       .index,
+                  controlImageData:
+                      useCanny && _cannyProcessor?.resultRgbBytes != null
+                          ? _ensureRgbFormat(
+                              _cannyProcessor!.resultRgbBytes!,
+                              _cannyProcessor!.resultWidth!,
+                              _cannyProcessor!.resultHeight!)
+                          : _controlRgbBytes,
+                  controlImageWidth:
+                      useCanny && _cannyProcessor?.resultWidth != null
+                          ? _cannyProcessor!.resultWidth
+                          : _controlWidth,
+                  controlImageHeight:
+                      useCanny && _cannyProcessor?.resultHeight != null
+                          ? _cannyProcessor!.resultHeight
+                          : _controlHeight,
+                  controlStrength: controlStrength,
                 );
               },
               child: const Text('Generate'),

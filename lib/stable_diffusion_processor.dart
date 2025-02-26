@@ -69,7 +69,11 @@ class StableDiffusionProcessor {
   final String? stackedIdEmbedDir;
   final int clipSkip;
   final bool vaeTiling;
-
+  final String? controlNetPath; // Add this
+  final Uint8List? controlImageData; // Add this
+  final int? controlImageWidth; // Add this
+  final int? controlImageHeight; // Add this // Add this
+  final double controlStrength;
   late Isolate _sdIsolate;
   late SendPort _sdSendPort;
   final Completer _uninitialized = Completer();
@@ -97,9 +101,14 @@ class StableDiffusionProcessor {
     this.t5xxlPath,
     this.vaePath,
     this.embedDirPath,
-    this.stackedIdEmbedDir, // Add this parameter
+    this.stackedIdEmbedDir,
     this.clipSkip = 1,
     this.vaeTiling = false,
+    this.controlNetPath, // Add this
+    this.controlImageData, // Add this
+    this.controlImageWidth, // Add this
+    this.controlImageHeight, // Add this
+    this.controlStrength = 0.9, // Add this
   }) {
     _initializeIsolate();
   }
@@ -162,9 +171,10 @@ class StableDiffusionProcessor {
             't5xxlPath': t5xxlPath,
             'vaePath': vaePath,
             'embedDirPath': embedDirPath,
-            'stackedIdEmbedDir': stackedIdEmbedDir, // Add this
+            'stackedIdEmbedDir': stackedIdEmbedDir,
             'clipSkip': clipSkip,
             'vaeTiling': vaeTiling,
+            'controlNetPath': controlNetPath, // Add this
           });
         } else if (message is Map) {
           if (message['type'] == 'modelLoaded') {
@@ -264,6 +274,10 @@ class StableDiffusionProcessor {
                       message['embedDirPath'].toString().isNotEmpty
                   ? message['embedDirPath'].toString().toNativeUtf8()
                   : "".toNativeUtf8();
+              final controlNetPathUtf8 = message['controlNetPath'] != null &&
+                      message['controlNetPath'].toString().isNotEmpty
+                  ? message['controlNetPath'].toString().toNativeUtf8()
+                  : "".toNativeUtf8();
 
               FFIBindings.setLogCallback(_logCallbackPtr, nullptr);
               FFIBindings.setProgressCallback(_progressCallbackPtr, nullptr);
@@ -276,10 +290,10 @@ class StableDiffusionProcessor {
                 emptyUtf8,
                 vaePathUtf8,
                 taesdPathUtf8,
-                emptyUtf8,
+                controlNetPathUtf8, // Update this
                 loraDirUtf8,
                 embedDirUtf8,
-                stackedIdEmbedDirUtf8, // Add this
+                stackedIdEmbedDirUtf8,
                 message['useFlashAttention'],
                 message['vaeTiling'],
                 false,
@@ -300,6 +314,7 @@ class StableDiffusionProcessor {
               calloc.free(t5xxlPathUtf8);
               calloc.free(vaePathUtf8);
               calloc.free(embedDirUtf8);
+              calloc.free(controlNetPathUtf8); // Add this
               if (stackedIdEmbedDirUtf8 != emptyUtf8) {
                 calloc.free(stackedIdEmbedDirUtf8);
               }
@@ -327,9 +342,6 @@ class StableDiffusionProcessor {
           case 'generate':
             if (ctx != null) {
               print("Starting image generation with context: ${ctx!.address}");
-              print("cfgScale: ${message['cfgScale']}");
-              print("guidance: ${message['guidance']}");
-              print("styleStrength: ${message['styleStrength']}");
               try {
                 final promptUtf8 = message['prompt'].toString().toNativeUtf8();
                 final negPromptUtf8 =
@@ -338,6 +350,27 @@ class StableDiffusionProcessor {
                     message['inputIdImagesPath'].toString().toNativeUtf8();
                 final styleStrength = message['styleStrength'];
                 final emptyUtf8 = "".toNativeUtf8();
+
+                Pointer<SDImage>? controlCondPtr;
+                if (message['controlImageData'] != null) {
+                  final controlImageData =
+                      message['controlImageData'] as Uint8List;
+                  final controlWidth = message['controlImageWidth'] as int;
+                  final controlHeight = message['controlImageHeight'] as int;
+                  final controlDataPtr = malloc<Uint8>(controlImageData.length);
+                  controlDataPtr
+                      .asTypedList(controlImageData.length)
+                      .setAll(0, controlImageData);
+
+                  // In the _isolateEntryPoint function, modify the code for Canny processing:
+
+                  controlCondPtr = malloc<SDImage>();
+                  controlCondPtr.ref
+                    ..width = controlWidth
+                    ..height = controlHeight
+                    ..channel = 3
+                    ..data = controlDataPtr;
+                }
 
                 final result = FFIBindings.txt2img(
                   ctx!,
@@ -352,12 +385,18 @@ class StableDiffusionProcessor {
                   message['sampleSteps'],
                   message['seed'],
                   message['batchCount'],
-                  nullptr,
-                  0.0,
+                  controlCondPtr ?? nullptr, // Add this
+                  message['controlStrength'] ?? 0.0, // Add this
                   styleStrength,
                   false,
                   inputIdImagesPathUtf8,
                 );
+
+                if (controlCondPtr != null) {
+                  calloc.free(controlCondPtr.ref.data);
+
+                  malloc.free(controlCondPtr);
+                }
 
                 calloc.free(promptUtf8);
                 calloc.free(negPromptUtf8);
@@ -431,14 +470,15 @@ class StableDiffusionProcessor {
     int batchCount = 1,
     String? inputIdImagesPath,
     double styleStrength = 1.0,
+    Uint8List? controlImageData, // Add this
+    int? controlImageWidth, // Add this
+    int? controlImageHeight, // Add this
+    double controlStrength = 0.9, // Add this
   }) async {
     _loadingController.add(true);
     try {
       await _uninitialized.future;
-
-      // Add delay between generations to allow memory cleanup
       await Future.delayed(const Duration(milliseconds: 500));
-
       _sdSendPort.send({
         'command': 'generate',
         'prompt': prompt,
@@ -454,6 +494,10 @@ class StableDiffusionProcessor {
         'batchCount': batchCount,
         'inputIdImagesPath': inputIdImagesPath ?? '',
         'styleStrength': styleStrength,
+        'controlImageData': controlImageData, // Add this
+        'controlImageWidth': controlImageWidth, // Add this
+        'controlImageHeight': controlImageHeight, // Add this // Add this
+        'controlStrength': controlStrength, // Add this
       });
     } finally {
       _loadingController.add(false);
