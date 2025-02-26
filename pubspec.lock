@@ -198,6 +198,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.5.2"
+  flutter_drawing_board:
+    dependency: "direct main"
+    description:
+      name: flutter_drawing_board
+      sha256: cc0a7bc665320628f2927632e2cdeee935ebbb48e0e6400ed504663ae704e713
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.9.5"
   flutter_launcher_icons:
     dependency: "direct main"
     description:

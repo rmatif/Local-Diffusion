@@ -48,6 +48,7 @@ dependencies:
   image: ^4.2.0
   dotted_border: ^2.1.0
   before_after: ^3.2.0
+  flutter_drawing_board: ^0.9.5
 dev_dependencies:
   flutter_test:
     sdk: flutter

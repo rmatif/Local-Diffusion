@@ -15,6 +15,7 @@ import 'img2img_page.dart';
 import 'photomaker_page.dart';
 import 'package:image/image.dart' as img;
 import 'canny_processor.dart';
+import 'scribble2img_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -700,6 +701,22 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   context,
                   MaterialPageRoute(
                       builder: (context) => const PhotomakerPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.draw, size: 32),
+              title: const Text('Scribble to Image',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ScribblePage()),
                 );
               },
             ),

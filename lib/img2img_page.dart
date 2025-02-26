@@ -15,6 +15,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'canny_processor.dart';
 import 'ffi_bindings.dart';
 import 'img2img_processor.dart';
+import 'scribble2img_page.dart';
 import 'utils.dart';
 import 'main.dart';
 import 'upscaler_page.dart';
@@ -657,6 +658,22 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   context,
                   MaterialPageRoute(
                       builder: (context) => const PhotomakerPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.draw, size: 32),
+              title: const Text('Scribble to Image',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ScribblePage()),
                 );
               },
             ),

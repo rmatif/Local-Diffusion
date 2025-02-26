@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:gal/gal.dart';
 import 'ffi_bindings.dart';
+import 'scribble2img_page.dart';
 import 'upscaler_processor.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dotted_border/dotted_border.dart';
@@ -359,6 +360,23 @@ class _UpscalerPageState extends State<UpscalerPage> {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const PhotomakerPage()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.draw, size: 32),
+                title: const Text('Scribble to Image',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                onTap: () {
+                  if (_processor != null) {
+                    _processor!.dispose();
+                    _processor = null;
+                  }
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const ScribblePage()),
                   );
                 },
               ),

@@ -1,30 +1,32 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'ffi_bindings.dart';
-import 'scribble2img_page.dart';
+import 'photomaker_page.dart';
 import 'stable_diffusion_processor.dart';
 import 'utils.dart';
 import 'main.dart';
 import 'img2img_page.dart';
 import 'upscaler_page.dart';
+import 'package:flutter_drawing_board/flutter_drawing_board.dart';
+import 'package:image/image.dart' as img;
 
-class PhotomakerPage extends StatefulWidget {
-  const PhotomakerPage({super.key});
+class ScribblePage extends StatefulWidget {
+  const ScribblePage({super.key});
 
   @override
-  State<PhotomakerPage> createState() => _PhotomakerPageState();
+  State<ScribblePage> createState() => _ScribblePageState();
 }
 
-class _PhotomakerPageState extends State<PhotomakerPage>
+class _ScribblePageState extends State<ScribblePage>
     with SingleTickerProviderStateMixin {
   Timer? _modelErrorTimer;
   Timer? _errorMessageTimer;
@@ -66,9 +68,14 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   String? _loraPath;
   String? _vaePath;
   String? _embedDirPath;
-  String? _photomakerDirPath;
-  List<XFile> _selectedImages = [];
-  double styleStrength = 50.0;
+  String? _controlNetPath;
+  Uint8List? _controlImageData;
+  int? _controlWidth;
+  int? _controlHeight;
+  double controlStrength = 0.9;
+  final DrawingController _drawingController = DrawingController();
+  Uint8List? _drawingImageData;
+  bool _hasDrawing = false;
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -149,9 +156,9 @@ class _PhotomakerPageState extends State<PhotomakerPage>
       t5xxlPath: null,
       vaePath: useVAE ? _vaePath : null,
       embedDirPath: _embedDirPath,
-      stackedIdEmbedDir: _photomakerDirPath,
       clipSkip: clipSkip.toInt(),
       vaeTiling: useVAETiling,
+      controlNetPath: _controlNetPath,
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -207,12 +214,177 @@ class _PhotomakerPageState extends State<PhotomakerPage>
     });
   }
 
-  Future<void> _pickImages() async {
-    final picker = ImagePicker();
-    final pickedFiles = await picker.pickMultiImage();
-    setState(() {
-      _selectedImages = pickedFiles.take(4).toList();
-    });
+  Future<void> _openDrawingBoard() async {
+    final screenSize = MediaQuery.of(context).size;
+    final dialogWidth = screenSize.width * 0.9;
+    final dialogHeight = screenSize.height * 0.7;
+
+    _drawingController.setStyle(color: Colors.black, strokeWidth: 3.0);
+
+    final result = await showDialog<Uint8List>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          width: dialogWidth,
+          height: dialogHeight,
+          child: Column(
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Drawing Board',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Cancel'),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 8),
+                            foregroundColor: Colors.black,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            final imageData =
+                                await _drawingController.getImageData();
+                            if (imageData != null) {
+                              final bytes = imageData.buffer.asUint8List();
+                              final originalImage = img.decodeImage(bytes);
+                              if (originalImage != null) {
+                                final resizedImage = img.copyResize(
+                                  originalImage,
+                                  width: 512,
+                                  height: 512,
+                                  interpolation: img.Interpolation.average,
+                                );
+                                final rgbBytes = Uint8List(512 * 512 * 3);
+                                int index = 0;
+                                for (int y = 0; y < 512; y++) {
+                                  for (int x = 0; x < 512; x++) {
+                                    final pixel = resizedImage.getPixel(x, y);
+                                    rgbBytes[index] = pixel.r.toInt();
+                                    rgbBytes[index + 1] = pixel.g.toInt();
+                                    rgbBytes[index + 2] = pixel.b.toInt();
+                                    index += 3;
+                                  }
+                                }
+                                final resizedBytes =
+                                    img.encodePng(resizedImage);
+                                setState(() {
+                                  _drawingImageData =
+                                      Uint8List.fromList(resizedBytes);
+                                  _controlImageData = rgbBytes;
+                                  _controlWidth = 512;
+                                  _controlHeight = 512;
+                                  _hasDrawing = true;
+                                });
+                                Navigator.of(context).pop();
+                              }
+                            } else {
+                              Navigator.of(context).pop();
+                            }
+                          },
+                          child: const Text('Save'),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 8),
+                            foregroundColor: Colors.black,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ...[
+                        Colors.black,
+                        Colors.red,
+                        Colors.blue,
+                        Colors.green,
+                        Colors.yellow,
+                        Colors.orange,
+                        Colors.purple,
+                        Colors.teal,
+                        Colors.pink,
+                        Colors.brown,
+                        Colors.grey
+                      ].map(
+                        (color) => GestureDetector(
+                          onTap: () {
+                            _drawingController.setStyle(color: color);
+                          },
+                          child: Container(
+                            margin: EdgeInsets.only(right: 8),
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                          ),
+                        ),
+                      ),
+                      ...[2.0, 5.0, 8.0, 12.0].map(
+                        (thickness) => GestureDetector(
+                          onTap: () {
+                            _drawingController.setStyle(strokeWidth: thickness);
+                          },
+                          child: Container(
+                            margin: EdgeInsets.only(right: 8),
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: Center(
+                              child: Container(
+                                width: thickness,
+                                height: thickness,
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Expanded(
+                child: DrawingBoard(
+                  controller: _drawingController,
+                  background: Container(
+                    width: dialogWidth,
+                    height: dialogHeight - 80,
+                    color: Colors.white,
+                  ),
+                  showDefaultActions: true,
+                  showDefaultTools: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void showModelLoadDialog() {
@@ -431,7 +603,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
     final theme = ShadTheme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Photomaker',
+        title: const Text('Scribble to Image',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: theme.colorScheme.background,
         elevation: 0,
@@ -518,14 +690,6 @@ class _PhotomakerPageState extends State<PhotomakerPage>
               title: const Text('Photomaker',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.draw, size: 32),
-              title: const Text('Scribble to Image',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
                 if (_processor != null) {
                   _processor!.dispose();
                   _processor = null;
@@ -533,8 +697,17 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                 Navigator.pop(context);
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => const ScribblePage()),
+                  MaterialPageRoute(
+                      builder: (context) => const PhotomakerPage()),
                 );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.draw, size: 32),
+              title: const Text('Scribble to Image',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                Navigator.pop(context);
               },
             ),
           ],
@@ -607,18 +780,22 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                     if (selectedDir != null) {
                       final directory = Directory(selectedDir);
                       final files = directory.listSync();
-                      final photomakerFiles = files
+                      final controlNetFiles = files
                           .whereType<File>()
-                          .where((file) => file.path.endsWith('.safetensors'))
+                          .where((file) =>
+                              file.path.endsWith('.safetensors') ||
+                              file.path.endsWith('.bin') ||
+                              file.path.endsWith('.pth') ||
+                              file.path.endsWith('.ckpt'))
                           .toList();
 
-                      if (photomakerFiles.isNotEmpty) {
-                        final selectedPhotomaker = await showShadDialog<String>(
+                      if (controlNetFiles.isNotEmpty) {
+                        final selectedControlNet = await showShadDialog<String>(
                           context: context,
                           builder: (BuildContext context) {
                             return ShadDialog.alert(
                               constraints: const BoxConstraints(maxWidth: 400),
-                              title: const Text('Select Photomaker Model'),
+                              title: const Text('Select ControlNet Model'),
                               description: SizedBox(
                                 height: 300,
                                 child: Material(
@@ -640,7 +817,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                                         return const FixedTableSpanExtent(80);
                                       return null;
                                     },
-                                    children: photomakerFiles
+                                    children: controlNetFiles
                                         .asMap()
                                         .entries
                                         .map((entry) => [
@@ -694,20 +871,33 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                           },
                         );
 
-                        if (selectedPhotomaker != null) {
+                        if (selectedControlNet != null) {
                           setState(() {
-                            _photomakerDirPath = selectedPhotomaker;
-                            loadedComponents['Photomaker'] = true;
+                            _controlNetPath = selectedControlNet;
+                            loadedComponents['ControlNet'] = true;
+                            if (_processor != null) {
+                              String currentModelPath = _processor!.modelPath;
+                              bool currentFlashAttention =
+                                  _processor!.useFlashAttention;
+                              SDType currentModelType = _processor!.modelType;
+                              Schedule currentSchedule = _processor!.schedule;
+                              _initializeProcessor(
+                                currentModelPath,
+                                currentFlashAttention,
+                                currentModelType,
+                                currentSchedule,
+                              );
+                            }
                           });
                         }
                       }
                     }
                   },
-                  child: const Text('Load Photomaker'),
+                  child: const Text('Load ControlNet'),
                 ),
                 const SizedBox(width: 8),
                 ShadButton(
-                  enabled: _photomakerDirPath != null &&
+                  enabled: _controlNetPath != null &&
                       !(isModelLoading || isGenerating),
                   onPressed: showModelLoadDialog,
                   child: const Text('Load Model'),
@@ -904,7 +1094,37 @@ class _PhotomakerPageState extends State<PhotomakerPage>
               ),
             const SizedBox(height: 16),
             GestureDetector(
-              onTap: (isModelLoading || isGenerating) ? null : _pickImages,
+              onTap: (isModelLoading || isGenerating)
+                  ? null
+                  : () async {
+                      if (_hasDrawing) {
+                        final shouldClear = await showShadDialog<bool>(
+                          context: context,
+                          builder: (context) => ShadDialog.alert(
+                            title: const Text('Continue Drawing?'),
+                            description: const Text(
+                                'Would you like to continue with your current drawing or start a new one?'),
+                            actions: [
+                              ShadButton.outline(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(true),
+                                child: const Text('New Drawing'),
+                              ),
+                              ShadButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(false),
+                                child: const Text('Continue'),
+                              ),
+                            ],
+                          ),
+                        );
+
+                        if (shouldClear == true) {
+                          _drawingController.clear();
+                        }
+                      }
+                      _openDrawingBoard();
+                    },
               child: DottedBorder(
                 borderType: BorderType.RRect,
                 radius: const Radius.circular(8),
@@ -914,20 +1134,21 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                 child: Container(
                   height: 200,
                   width: double.infinity,
-                  child: _selectedImages.isEmpty
-                      ? Center(
+                  child: _hasDrawing && _drawingImageData != null
+                      ? Image.memory(_drawingImageData!, fit: BoxFit.contain)
+                      : Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.add_photo_alternate,
+                                Icons.brush,
                                 size: 64,
                                 color:
                                     theme.colorScheme.primary.withOpacity(0.5),
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                'Select images',
+                                'Tap to draw',
                                 style: TextStyle(
                                   color: theme.colorScheme.primary
                                       .withOpacity(0.5),
@@ -935,29 +1156,6 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                                 ),
                               ),
                             ],
-                          ),
-                        )
-                      : SingleChildScrollView(
-                          scrollDirection:
-                              Axis.vertical, // Changed from horizontal
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Wrap(
-                              alignment: WrapAlignment.start,
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: _selectedImages.map((image) {
-                                return Container(
-                                  width:
-                                      90, // Dynamically calculate width for 5 images per row
-                                  height: 90,
-                                  child: Image.file(
-                                    File(image.path),
-                                    fit: BoxFit.cover,
-                                  ),
-                                );
-                              }).toList(),
-                            ),
                           ),
                         ),
                 ),
@@ -1459,18 +1657,18 @@ class _PhotomakerPageState extends State<PhotomakerPage>
             const SizedBox(height: 16),
             Row(
               children: [
-                const Text('Style Strength'),
+                const Text('Control Strength'),
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSlider(
-                    initialValue: styleStrength,
-                    min: 0,
-                    max: 100,
+                    initialValue: controlStrength,
+                    min: 0.0,
+                    max: 1.0,
                     divisions: 20,
-                    onChanged: (v) => setState(() => styleStrength = v),
+                    onChanged: (v) => setState(() => controlStrength = v),
                   ),
                 ),
-                Text(styleStrength.toStringAsFixed(0)),
+                Text(controlStrength.toStringAsFixed(2)),
               ],
             ),
             const SizedBox(height: 16),
@@ -1523,7 +1721,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
             const SizedBox(height: 16),
             ShadButton(
               enabled: !(isModelLoading || isGenerating),
-              onPressed: () async {
+              onPressed: () {
                 if (_processor == null) {
                   _modelErrorTimer?.cancel();
                   setState(() {
@@ -1536,16 +1734,8 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                   });
                   return;
                 }
-                if (_selectedImages.isEmpty) {
-                  _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please select images first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
-                    setState(() {
-                      _modelError = '';
-                    });
-                  });
+                if (!_hasDrawing) {
+                  _showTemporaryError('Please create a drawing first');
                   return;
                 }
                 setState(() {
@@ -1554,19 +1744,6 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                   status = 'Generating image...';
                   progress = 0;
                 });
-
-                final cacheDir = await getTemporaryDirectory();
-                final tempFolder =
-                    Directory('${cacheDir.path}/photomaker_temp');
-                if (await tempFolder.exists()) {
-                  await tempFolder.delete(recursive: true);
-                }
-                await tempFolder.create();
-
-                for (var image in _selectedImages) {
-                  final file = File(image.path);
-                  await file.copy('${tempFolder.path}/${image.name}');
-                }
 
                 _processor!.generateImage(
                   prompt: prompt,
@@ -1584,8 +1761,10 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                         orElse: () => SampleMethod.EULER_A,
                       )
                       .index,
-                  inputIdImagesPath: tempFolder.path,
-                  styleStrength: styleStrength / 100.0,
+                  controlImageData: _controlImageData,
+                  controlImageWidth: _controlWidth,
+                  controlImageHeight: _controlHeight,
+                  controlStrength: controlStrength,
                 );
               },
               child: const Text('Generate'),
