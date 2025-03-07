@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'ffi_bindings.dart';
+import 'inpainting_page.dart';
 import 'photomaker_page.dart';
 import 'stable_diffusion_processor.dart';
 import 'utils.dart';
@@ -87,7 +88,9 @@ class _ScribblePageState extends State<ScribblePage>
     'dpm++2mv2',
     'ipndm',
     'ipndm_v',
-    'lcm'
+    'lcm',
+    'ddim_trailing', // New sampler
+    'tcd' // New sampler
   ];
 
   void _showTemporaryError(String error) {
@@ -708,6 +711,23 @@ class _ScribblePageState extends State<ScribblePage>
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
                 Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.palette, size: 32),
+              title: const Text('Inpainting',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const InpaintingPage()),
+                );
               },
             ),
           ],

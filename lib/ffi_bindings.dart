@@ -39,7 +39,9 @@ enum SampleMethod {
   DPMPP2Mv2,
   IPNDM,
   IPNDM_V,
-  LCM
+  LCM,
+  DDIM_TRAILING, // New sampler
+  TCD // New sampler
 }
 
 enum Schedule { DEFAULT, DISCRETE, KARRAS, EXPONENTIAL, AYS, GITS }
@@ -137,7 +139,8 @@ class FFIBindings {
           Bool,
           Bool,
           Bool,
-          Int32),
+          Int32,
+          Bool),
       Pointer<Void> Function(
           Pointer<Utf8>,
           Pointer<Utf8>,
@@ -160,7 +163,8 @@ class FFIBindings {
           bool,
           bool,
           bool,
-          int)>('new_sd_ctx', isLeaf: false);
+          int,
+          bool)>('new_sd_ctx', isLeaf: false);
 
   static final freeSdCtx = _lib.lookupFunction<Void Function(Pointer<Void>),
       void Function(Pointer<Void>)>('free_sd_ctx', isLeaf: false);
@@ -180,42 +184,55 @@ class FFIBindings {
 
   // Around line 135 in lib/ffi_bindings.dart (before txt2img binding)
   static final txt2img = _lib.lookupFunction<
-      Pointer<SDImage> Function(
-          Pointer<Void>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Int32,
-          Float,
-          Float,
-          Int32,
-          Int32,
-          Int32,
-          Int32,
-          Int64,
-          Int32,
-          Pointer<SDImage>, // Added for control_cond
-          Float, // Added for control_strength
-          Float,
-          Bool,
-          Pointer<Utf8>),
-      Pointer<SDImage> Function(
-          Pointer<Void>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          int,
-          double,
-          double,
-          int,
-          int,
-          int,
-          int,
-          int,
-          int,
-          Pointer<SDImage>, // Added for control_cond
-          double, // Added for control_strength
-          double,
-          bool,
-          Pointer<Utf8>)>('txt2img', isLeaf: false);
+          Pointer<SDImage> Function(
+              Pointer<Void>,
+              Pointer<Utf8>,
+              Pointer<Utf8>,
+              Int32,
+              Float,
+              Float,
+              Float, // eta (new parameter)
+              Int32,
+              Int32,
+              Int32,
+              Int32,
+              Int64,
+              Int32,
+              Pointer<SDImage>,
+              Float,
+              Float,
+              Bool,
+              Pointer<Utf8>,
+              Pointer<Int32>, // skip_layers (new)
+              IntPtr, // skip_layers_count (new)
+              Float, // slg_scale (new)
+              Float, // skip_layer_start (new)
+              Float), // skip_layer_end (new)
+          Pointer<SDImage> Function(
+              Pointer<Void>,
+              Pointer<Utf8>,
+              Pointer<Utf8>,
+              int,
+              double,
+              double,
+              double, // eta (new parameter)
+              int,
+              int,
+              int,
+              int,
+              int,
+              int,
+              Pointer<SDImage>,
+              double,
+              double,
+              bool,
+              Pointer<Utf8>,
+              Pointer<Int32>, // skip_layers (new)
+              int, // skip_layers_count (new)
+              double, // slg_scale (new)
+              double, // skip_layer_start (new)
+              double)> // skip_layer_end (new)
+      ('txt2img', isLeaf: false);
 
 // Add preprocess_canny binding around line 200 (after upscale binding)
   static final preprocessCanny = _lib.lookupFunction<
@@ -225,44 +242,59 @@ class FFIBindings {
           double, bool)>('preprocess_canny', isLeaf: false);
 
   static final img2img = _lib.lookupFunction<
-      Pointer<SDImage> Function(
-          Pointer<Void>,
-          SDImage,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Int32,
-          Float,
-          Float,
-          Int32,
-          Int32,
-          Int32,
-          Int32,
-          Float,
-          Int64,
-          Int32,
-          Pointer<SDImage>, // control_cond
-          Float, // control_strength
-          Float,
-          Bool,
-          Pointer<Utf8>),
-      Pointer<SDImage> Function(
-          Pointer<Void>,
-          SDImage,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          int,
-          double,
-          double,
-          int,
-          int,
-          int,
-          int,
-          double,
-          int,
-          int,
-          Pointer<SDImage>, // control_cond
-          double, // control_strength
-          double,
-          bool,
-          Pointer<Utf8>)>('img2img', isLeaf: false);
+          Pointer<SDImage> Function(
+              Pointer<Void>,
+              SDImage,
+              SDImage, // mask_image (new parameter)
+              Pointer<Utf8>,
+              Pointer<Utf8>,
+              Int32,
+              Float,
+              Float,
+              Float, // eta (new parameter)
+              Int32,
+              Int32,
+              Int32,
+              Int32,
+              Float,
+              Int64,
+              Int32,
+              Pointer<SDImage>,
+              Float,
+              Float,
+              Bool,
+              Pointer<Utf8>,
+              Pointer<Int32>, // skip_layers (new)
+              IntPtr, // skip_layers_count (new)
+              Float, // slg_scale (new)
+              Float, // skip_layer_start (new)
+              Float), // skip_layer_end (new)
+          Pointer<SDImage> Function(
+              Pointer<Void>,
+              SDImage,
+              SDImage, // mask_image (new parameter)
+              Pointer<Utf8>,
+              Pointer<Utf8>,
+              int,
+              double,
+              double,
+              double, // eta (new parameter)
+              int,
+              int,
+              int,
+              int,
+              double,
+              int,
+              int,
+              Pointer<SDImage>,
+              double,
+              double,
+              bool,
+              Pointer<Utf8>,
+              Pointer<Int32>, // skip_layers (new)
+              int, // skip_layers_count (new)
+              double, // slg_scale (new)
+              double, // skip_layer_start (new)
+              double)> // skip_layer_end (new)
+      ('img2img', isLeaf: false);
 }

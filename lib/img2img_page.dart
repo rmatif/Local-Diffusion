@@ -15,6 +15,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'canny_processor.dart';
 import 'ffi_bindings.dart';
 import 'img2img_processor.dart';
+import 'inpainting_page.dart';
 import 'scribble2img_page.dart';
 import 'utils.dart';
 import 'main.dart';
@@ -101,7 +102,9 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     'dpm++2mv2',
     'ipndm',
     'ipndm_v',
-    'lcm'
+    'lcm',
+    'ddim_trailing', // New sampler
+    'tcd' // New sampler
   ];
 
   void _showTemporaryError(String error) {
@@ -674,6 +677,23 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const ScribblePage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.palette, size: 32),
+              title: const Text('Inpainting',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const InpaintingPage()),
                 );
               },
             ),

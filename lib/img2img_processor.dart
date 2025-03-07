@@ -114,7 +114,7 @@ class Img2ImgProcessor {
   static int mapModelTypeToIndex(SDType modelType) {
     switch (modelType) {
       case SDType.NONE:
-        return 34; // Maps to FP32
+        return 39;
       case SDType.SD_TYPE_Q8_0:
         return 8;
       case SDType.SD_TYPE_Q8_1:
@@ -280,7 +280,7 @@ class Img2ImgProcessor {
                 emptyUtf8, // diffusion_model_path, not used
                 vaePathUtf8,
                 taesdPathUtf8,
-                controlNetPathUtf8, // control_net_path_c_str, not used
+                controlNetPathUtf8,
                 loraDirUtf8,
                 embedDirUtf8,
                 emptyUtf8, // stacked_id_embed_dir_c_str, not used
@@ -295,6 +295,8 @@ class Img2ImgProcessor {
                 false, // keep_control_net_cpu, not used
                 false, // keep_vae_on_cpu, not used
                 message['clipSkip'],
+                message[
+                    'useFlashAttention'], // Added diffusion_flash_attn parameter
               );
 
               calloc.free(modelPathUtf8);
@@ -375,14 +377,51 @@ class Img2ImgProcessor {
                     ..data = controlDataPtr;
                 }
 
+                Pointer<SDImage> maskImage;
+                if (message['maskImageData'] != null) {
+                  // User provided a mask image
+                  final maskImageData = message['maskImageData'] as Uint8List;
+                  final maskWidth = message['maskImageWidth'] as int;
+                  final maskHeight = message['maskImageHeight'] as int;
+                  final maskDataPtr = malloc<Uint8>(maskImageData.length);
+                  maskDataPtr
+                      .asTypedList(maskImageData.length)
+                      .setAll(0, maskImageData);
+
+                  maskImage = malloc<SDImage>();
+                  maskImage.ref
+                    ..width = maskWidth
+                    ..height = maskHeight
+                    ..channel = 1 // Mask should be grayscale - 1 channel
+                    ..data = maskDataPtr;
+                } else {
+                  // Create default white mask (all 255 values)
+                  final maskDataSize = inputWidth * inputHeight;
+                  final maskDataPtr = malloc<Uint8>(maskDataSize);
+                  final maskDataList = maskDataPtr.asTypedList(maskDataSize);
+                  // Fill with 255 (white) values
+                  for (int i = 0; i < maskDataSize; i++) {
+                    maskDataList[i] = 255;
+                  }
+
+                  maskImage = malloc<SDImage>();
+                  maskImage.ref
+                    ..width = inputWidth
+                    ..height = inputHeight
+                    ..channel = 1 // Mask should be grayscale - 1 channel
+                    ..data = maskDataPtr;
+                }
+
                 final result = FFIBindings.img2img(
                   ctx!,
                   initImage.ref,
+                  maskImage.ref, // Added mask_image parameter
                   promptUtf8,
                   negPromptUtf8,
                   message['clipSkip'],
                   message['cfgScale'],
                   message['guidance'],
+                  0.0, // Added eta parameter
                   outputWidth,
                   outputHeight,
                   message['sampleMethod'],
@@ -390,15 +429,22 @@ class Img2ImgProcessor {
                   message['strength'],
                   message['seed'],
                   message['batchCount'],
-                  controlCondPtr ?? nullptr, // Pass ControlNet image
+                  controlCondPtr ?? nullptr,
                   message['controlStrength'] ?? 0.0,
-                  0.0,
+                  0.0, // style_strength
                   false, // normalize_input
                   emptyUtf8, // input_id_images_path
+                  nullptr, // skip_layers
+                  0, // skip_layers_count
+                  0.0, // slg_scale
+                  0.0, // skip_layer_start
+                  0.0, // skip_layer_end
                 );
 
                 calloc.free(initImageDataPtr);
                 malloc.free(initImage);
+                malloc.free(maskImage.ref.data);
+                malloc.free(maskImage);
                 calloc.free(promptUtf8);
                 calloc.free(negPromptUtf8);
                 calloc.free(emptyUtf8);
@@ -466,15 +512,19 @@ class Img2ImgProcessor {
     int clipSkip = 1,
     double cfgScale = 7.0,
     double guidance = 1.0,
+    double eta = 0.0, // Added eta parameter
     int sampleMethod = 0,
     int sampleSteps = 20,
     double strength = 0.5,
     int seed = 42,
     int batchCount = 1,
-    Uint8List? controlImageData, // Add this
-    int? controlImageWidth, // Add this
-    int? controlImageHeight, // Add this
+    Uint8List? controlImageData,
+    int? controlImageWidth,
+    int? controlImageHeight,
     double controlStrength = 0.9,
+    Uint8List? maskImageData, // Add this
+    int? maskWidth, // Add this
+    int? maskHeight, // Add this
   }) async {
     _loadingController.add(true);
     try {
@@ -493,6 +543,7 @@ class Img2ImgProcessor {
         'clipSkip': clipSkip,
         'cfgScale': cfgScale,
         'guidance': guidance,
+        'eta': eta, // Added eta parameter
         'sampleMethod': sampleMethod,
         'sampleSteps': sampleSteps,
         'strength': strength,
@@ -502,6 +553,9 @@ class Img2ImgProcessor {
         'controlImageWidth': controlImageWidth,
         'controlImageHeight': controlImageHeight,
         'controlStrength': controlStrength,
+        if (maskImageData != null) 'maskImageData': maskImageData,
+        if (maskWidth != null) 'maskImageWidth': maskWidth,
+        if (maskHeight != null) 'maskImageHeight': maskHeight,
       });
     } finally {
       _loadingController.add(false);

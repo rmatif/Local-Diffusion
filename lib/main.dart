@@ -9,6 +9,7 @@ import 'dart:developer' as developer;
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'ffi_bindings.dart';
+import 'inpainting_page.dart';
 import 'stable_diffusion_processor.dart';
 import 'upscaler_page.dart';
 import 'img2img_page.dart';
@@ -126,7 +127,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     'dpm++2mv2',
     'ipndm',
     'ipndm_v',
-    'lcm'
+    'lcm',
+    'ddim_trailing', // New sampler
+    'tcd' // New sampler
   ];
 
   List<int> getWidthOptions() {
@@ -717,6 +720,23 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const ScribblePage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.palette, size: 32),
+              title: const Text('Inpainting',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const InpaintingPage()),
                 );
               },
             ),

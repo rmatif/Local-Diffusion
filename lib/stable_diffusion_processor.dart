@@ -116,7 +116,7 @@ class StableDiffusionProcessor {
   static int mapModelTypeToIndex(SDType modelType) {
     switch (modelType) {
       case SDType.NONE:
-        return 34; // Maps to FP32
+        return 39;
       case SDType.SD_TYPE_Q8_0:
         return 8;
       case SDType.SD_TYPE_Q8_1:
@@ -290,7 +290,7 @@ class StableDiffusionProcessor {
                 emptyUtf8,
                 vaePathUtf8,
                 taesdPathUtf8,
-                controlNetPathUtf8, // Update this
+                controlNetPathUtf8,
                 loraDirUtf8,
                 embedDirUtf8,
                 stackedIdEmbedDirUtf8,
@@ -305,6 +305,8 @@ class StableDiffusionProcessor {
                 false,
                 false,
                 message['clipSkip'],
+                message[
+                    'useFlashAttention'], // Added diffusion_flash_attn parameter (using same value as useFlashAttention)
               );
 
               calloc.free(modelPathUtf8);
@@ -379,17 +381,23 @@ class StableDiffusionProcessor {
                   message['clipSkip'],
                   message['cfgScale'],
                   message['guidance'],
+                  0.0, // eta (new parameter)
                   message['width'],
                   message['height'],
                   message['sampleMethod'],
                   message['sampleSteps'],
                   message['seed'],
                   message['batchCount'],
-                  controlCondPtr ?? nullptr, // Add this
-                  message['controlStrength'] ?? 0.0, // Add this
+                  controlCondPtr ?? nullptr,
+                  message['controlStrength'] ?? 0.0,
                   styleStrength,
                   false,
                   inputIdImagesPathUtf8,
+                  nullptr, // skip_layers
+                  0, // skip_layers_count
+                  0.0, // slg_scale
+                  0.0, // skip_layer_start
+                  0.0, // skip_layer_end
                 );
 
                 if (controlCondPtr != null) {
