@@ -113,6 +113,8 @@ class _InpaintingPageState extends State<InpaintingPage>
     'tcd'
   ];
 
+  // Removed getWidthOptions and getHeightOptions as they are no longer needed
+
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
     setState(() {
@@ -123,18 +125,6 @@ class _InpaintingPageState extends State<InpaintingPage>
         _taesdError = '';
       });
     });
-  }
-
-  List<int> getWidthOptions() {
-    List<int> opts = [];
-    for (int i = 128; i <= 512; i += 64) {
-      opts.add(i);
-    }
-    return opts;
-  }
-
-  List<int> getHeightOptions() {
-    return getWidthOptions();
   }
 
   @override
@@ -2561,16 +2551,13 @@ class _InpaintingPageState extends State<InpaintingPage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getWidthOptions()
-                        .map((w) =>
-                            ShadOption(value: w, child: Text(w.toString())))
-                        .toList(),
-                    selectedOptionBuilder: (context, value) =>
-                        Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => width = value);
-                    },
+                    enabled: false, // Disable the dropdown
+                    placeholder: Text(_inputWidth?.toString() ??
+                        'N/A'), // Display input width
+                    options: const [], // No options needed
+                    selectedOptionBuilder: (context, value) => Text(value
+                        .toString()), // Keep for consistency, though disabled
+                    // onChanged removed as it's disabled
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -2578,16 +2565,13 @@ class _InpaintingPageState extends State<InpaintingPage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getHeightOptions()
-                        .map((h) =>
-                            ShadOption(value: h, child: Text(h.toString())))
-                        .toList(),
-                    selectedOptionBuilder: (context, value) =>
-                        Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => height = value);
-                    },
+                    enabled: false, // Disable the dropdown
+                    placeholder: Text(_inputHeight?.toString() ??
+                        'N/A'), // Display input height
+                    options: const [], // No options needed
+                    selectedOptionBuilder: (context, value) => Text(value
+                        .toString()), // Keep for consistency, though disabled
+                    // onChanged removed as it's disabled
                   ),
                 ),
               ],
@@ -2641,8 +2625,8 @@ class _InpaintingPageState extends State<InpaintingPage>
                   inputWidth: _inputWidth!,
                   inputHeight: _inputHeight!,
                   channel: 3,
-                  outputWidth: width,
-                  outputHeight: height,
+                  outputWidth: _inputWidth!, // Use input width
+                  outputHeight: _inputHeight!, // Use input height
                   prompt: prompt,
                   negativePrompt: negativePrompt,
                   clipSkip: clipSkip.toInt(),
