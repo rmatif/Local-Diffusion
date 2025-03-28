@@ -11,6 +11,7 @@ import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'ffi_bindings.dart';
 import 'inpainting_page.dart';
+import 'outpainting_page.dart';
 import 'photomaker_page.dart';
 import 'stable_diffusion_processor.dart';
 import 'utils.dart';
@@ -709,6 +710,7 @@ class _ScribblePageState extends State<ScribblePage>
               leading: const Icon(Icons.draw, size: 32),
               title: const Text('Scribble to Image',
                   style: TextStyle(fontWeight: FontWeight.bold)),
+              tileColor: theme.colorScheme.secondary.withOpacity(0.2),
               onTap: () {
                 Navigator.pop(context);
               },
@@ -727,6 +729,23 @@ class _ScribblePageState extends State<ScribblePage>
                   context,
                   MaterialPageRoute(
                       builder: (context) => const InpaintingPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.expand, size: 32),
+              title: const Text('Outpainting',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (_processor != null) {
+                  _processor!.dispose();
+                  _processor = null;
+                }
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const OutpaintingPage()),
                 );
               },
             ),

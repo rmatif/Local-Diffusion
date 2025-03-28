@@ -9,6 +9,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:gal/gal.dart';
 import 'ffi_bindings.dart';
 import 'inpainting_page.dart';
+import 'outpainting_page.dart';
 import 'scribble2img_page.dart';
 import 'upscaler_processor.dart';
 import 'package:path_provider/path_provider.dart';
@@ -345,6 +346,7 @@ class _UpscalerPageState extends State<UpscalerPage> {
                   'Upscaler',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
+                tileColor: theme.colorScheme.secondary.withOpacity(0.2),
                 onTap: () => Navigator.pop(context),
               ),
               ListTile(
@@ -395,6 +397,23 @@ class _UpscalerPageState extends State<UpscalerPage> {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const InpaintingPage()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(LucideIcons.expand, size: 32),
+                title: const Text('Outpainting',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                onTap: () {
+                  if (_processor != null) {
+                    _processor!.dispose();
+                    _processor = null;
+                  }
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const OutpaintingPage()),
                   );
                 },
               ),

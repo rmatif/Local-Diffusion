@@ -39,7 +39,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.2
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.3
   image_picker: ^1.1.2
   shadcn_ui: ^0.19.3
   flutter_animate: ^4.5.2
@@ -49,7 +49,8 @@ dependencies:
   dotted_border: ^2.1.0
   before_after: ^3.2.0
   flutter_drawing_board: ^0.9.5
-  vector_math: ^2.1.4
+  tflite_flutter: ^0.11.0
+  share_plus: ^10.1.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -106,6 +107,6 @@ flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/icon/icon.png"
-  adaptive_icon_background: "#00020b" 
+  adaptive_icon_background: "#000000" 
   adaptive_icon_foreground: "assets/icon/icon.png"
   adaptive_icon_mask: true

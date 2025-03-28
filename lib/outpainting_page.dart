@@ -12,25 +12,26 @@ import 'package:image/image.dart' as img;
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
-import 'canny_processor.dart';
+import 'canny_processor.dart'; // Kept in case needed for controlnet later
 import 'ffi_bindings.dart';
+import 'img2img_page.dart';
 import 'img2img_processor.dart';
-import 'inpainting_page.dart';
-import 'outpainting_page.dart';
 import 'scribble2img_page.dart';
 import 'utils.dart';
 import 'main.dart';
 import 'upscaler_page.dart';
 import 'photomaker_page.dart';
+import 'inpainting_page.dart';
+// import 'mask_editor.dart'; // Not directly needed for mask creation anymore
 
-class Img2ImgPage extends StatefulWidget {
-  const Img2ImgPage({super.key});
+class OutpaintingPage extends StatefulWidget {
+  const OutpaintingPage({super.key});
 
   @override
-  State<Img2ImgPage> createState() => _Img2ImgPageState();
+  State<OutpaintingPage> createState() => _OutpaintingPageState();
 }
 
-class _Img2ImgPageState extends State<Img2ImgPage>
+class _OutpaintingPageState extends State<OutpaintingPage>
     with SingleTickerProviderStateMixin {
   Timer? _modelErrorTimer;
   Timer? _errorMessageTimer;
@@ -53,13 +54,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   final Map<String, GlobalKey> _loraKeys = {};
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 1.0; // Changed from 0 to 1.0 to align with typical default
+  double clipSkip = 1.0;
   bool useVAE = false;
   String samplingMethod = 'euler_a';
   double cfg = 7;
   int steps = 25;
-  int width = 512;
-  int height = 512;
+  // Output width/height are now calculated based on input + padding
+  int outputWidth = 512;
+  int outputHeight = 512;
   String seed = "-1";
   String prompt = '';
   String negativePrompt = '';
@@ -72,7 +74,19 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   Uint8List? _rgbBytes;
   int? _inputWidth;
   int? _inputHeight;
-  double strength = 0.5;
+  double strength = 0.75; // Default strength for outpainting often higher
+  Uint8List? _maskData; // Generated based on padding
+  ui.Image? _maskImageUi; // To display the generated mask
+
+  // Padding state variables
+  int paddingTop = 0;
+  int paddingBottom = 0;
+  int paddingLeft = 0;
+  int paddingRight = 0;
+
+  // Padding options (multiples of 64 up to 256)
+  final List<int> paddingOptions =
+      List.generate(256 ~/ 64 + 1, (index) => index * 64);
 
   String? _taesdPath;
   String? _loraPath;
@@ -81,14 +95,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   String? _t5xxlPath;
   String? _vaePath;
   String? _embedDirPath;
-  String? _controlNetPath; // Add this
-  File? _controlImage; // Add this
-  Uint8List? _controlRgbBytes; // Add this
-  int? _controlWidth; // Add this
-  int? _controlHeight; // Add this
-  bool useControlNet = false; // Add this
-  bool useControlImage = false; // Add this
-  bool useCanny = false; // Add this
+  String? _controlNetPath;
+  File? _controlImage;
+  Uint8List? _controlRgbBytes;
+  int? _controlWidth;
+  int? _controlHeight;
+  bool useControlNet = false;
+  bool useControlImage = false;
+  bool useCanny = false;
   double controlStrength = 0.9;
   CannyProcessor? _cannyProcessor;
   bool isCannyProcessing = false;
@@ -104,8 +118,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     'ipndm',
     'ipndm_v',
     'lcm',
-    'ddim_trailing', // New sampler
-    'tcd' // New sampler
+    'ddim_trailing',
+    'tcd'
   ];
 
   void _showTemporaryError(String error) {
@@ -120,6 +134,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     });
   }
 
+  // Not used for selection anymore, but might be useful elsewhere
   List<int> getWidthOptions() {
     List<int> opts = [];
     for (int i = 128; i <= 512; i += 64) {
@@ -147,11 +162,15 @@ class _Img2ImgPageState extends State<Img2ImgPage>
 
     _cannyProcessor!.imageStream.listen((image) async {
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-
       setState(() {
         _cannyImage = Image.memory(bytes!.buffer.asUint8List());
       });
     });
+
+    // Calculate initial dimensions if input exists (though unlikely on init)
+    if (_inputWidth != null && _inputHeight != null) {
+      _calculateDimensionsAndGenerateMask();
+    }
   }
 
   @override
@@ -160,7 +179,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     _modelErrorTimer?.cancel();
     _processor?.dispose();
     _processor = null;
-    _cannyProcessor?.dispose(); // Ensure processor is nullified
+    _cannyProcessor?.dispose();
     super.dispose();
   }
 
@@ -173,28 +192,20 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   }
 
   Uint8List _ensureRgbFormat(Uint8List bytes, int width, int height) {
-    // If the bytes length matches a 3-channel image, assume it's already in RGB format
     if (bytes.length == width * height * 3) {
       return bytes;
     }
-
-    // If it's a grayscale image (1 channel)
     if (bytes.length == width * height) {
       final rgbBytes = Uint8List(width * height * 3);
       for (int i = 0; i < width * height; i++) {
-        // Convert grayscale to RGB by duplicating the value to all channels
         rgbBytes[i * 3] = bytes[i];
         rgbBytes[i * 3 + 1] = bytes[i];
         rgbBytes[i * 3 + 2] = bytes[i];
       }
       return rgbBytes;
     }
-
-    // If it's already in a different format, log the issue
     print(
         "Warning: Unexpected image format. Expected 1 or 3 channels, got: ${bytes.length / (width * height)} channels");
-
-    // As a fallback, try to interpret it as is
     return bytes;
   }
 
@@ -209,7 +220,6 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       return;
     }
 
-    // Convert to RGB format (3 channels)
     final rgbBytes = Uint8List(decodedImage.width * decodedImage.height * 3);
     int rgbIndex = 0;
 
@@ -223,7 +233,6 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       }
     }
 
-    // Process with Canny
     await _cannyProcessor!.processImage(
       rgbBytes,
       decodedImage.width,
@@ -236,6 +245,79 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         inverse: false,
       ),
     );
+  }
+
+  // No longer loads external mask, generates it based on padding
+  Future<void> _generateMask() async {
+    if (_inputWidth == null || _inputHeight == null) return;
+
+    // Calculate output dimensions based on input and padding
+    outputWidth = _inputWidth! + paddingLeft + paddingRight;
+    outputHeight = _inputHeight! + paddingTop + paddingBottom;
+
+    // Ensure dimensions are positive
+    if (outputWidth <= 0 || outputHeight <= 0) {
+      _showTemporaryError("Invalid dimensions after padding.");
+      return;
+    }
+
+    // Create mask data (1 channel, 0=black, 255=white)
+    final maskData = Uint8List(outputWidth * outputHeight);
+
+    // Fill mask based on padding
+    for (int y = 0; y < outputHeight; y++) {
+      for (int x = 0; x < outputWidth; x++) {
+        // Check if the pixel is within the original image area (after padding offset)
+        bool isInsideOriginal = x >= paddingLeft &&
+            x < paddingLeft + _inputWidth! &&
+            y >= paddingTop &&
+            y < paddingTop + _inputHeight!;
+
+        // If inside original image area -> black (0)
+        // If in padding area -> white (255)
+        maskData[y * outputWidth + x] = isInsideOriginal ? 0 : 255;
+      }
+    }
+
+    setState(() {
+      _maskData = maskData;
+      // Decode the generated mask for preview
+      _decodeMaskImage(maskData, outputWidth, outputHeight);
+    });
+  }
+
+  // Calculates dimensions and triggers mask generation
+  void _calculateDimensionsAndGenerateMask() {
+    if (_inputWidth == null || _inputHeight == null) {
+      // Reset if no input image
+      setState(() {
+        outputWidth = 512; // Or some default
+        outputHeight = 512;
+        _maskData = null;
+        _maskImageUi = null;
+      });
+      return;
+    }
+
+    // Calculate output dimensions
+    int newWidth = _inputWidth! + paddingLeft + paddingRight;
+    int newHeight = _inputHeight! + paddingTop + paddingBottom;
+
+    // Ensure dimensions are valid (e.g., non-negative)
+    if (newWidth <= 0 || newHeight <= 0) {
+      _showTemporaryError("Invalid dimensions resulting from padding.");
+      // Optionally reset padding or handle error differently
+      return;
+    }
+
+    // Update state for UI display and processor input
+    setState(() {
+      outputWidth = newWidth;
+      outputHeight = newHeight;
+    });
+
+    // Generate the mask based on the new dimensions and padding
+    _generateMask();
   }
 
   void _initializeProcessor(String modelPath, bool useFlashAttention,
@@ -256,14 +338,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       clipLPath: _clipLPath,
       clipGPath: _clipGPath,
       t5xxlPath: _t5xxlPath,
-      vaePath: useVAE ? _vaePath : null, // Only pass VAE path if useVAE is true
+      vaePath: useVAE ? _vaePath : null,
       embedDirPath: _embedDirPath,
       clipSkip: clipSkip.toInt(),
       vaeTiling: useVAETiling,
-      controlNetPath: _controlNetPath, // Add this
-      controlImageData: _controlRgbBytes, // Add this
-      controlImageWidth: _controlWidth, // Add this
-      controlImageHeight: _controlHeight, // Add this // Add this
+      controlNetPath: _controlNetPath,
+      controlImageData: _controlRgbBytes,
+      controlImageWidth: _controlWidth,
+      controlImageHeight: _controlHeight,
       controlStrength: controlStrength,
       onModelLoaded: () {
         setState(() {
@@ -302,11 +384,12 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         status = 'Generation complete';
       });
 
+      // Use the calculated output dimensions for saving metadata
       await _processor!.saveGeneratedImage(
         image,
         prompt,
-        width,
-        height,
+        outputWidth, // Use calculated output width
+        outputHeight, // Use calculated output height
         SampleMethod.values.firstWhere(
           (method) =>
               method.displayName.toLowerCase() == samplingMethod.toLowerCase(),
@@ -448,10 +531,12 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                           style: TextStyle(fontSize: 16))),
                                 ],
                                 columnSpanExtent: (index) {
-                                  if (index == 0)
+                                  if (index == 0) {
                                     return const FixedTableSpanExtent(250);
-                                  if (index == 1)
+                                  }
+                                  if (index == 1) {
                                     return const FixedTableSpanExtent(80);
+                                  }
                                   return null;
                                 },
                                 children: modelFiles
@@ -545,26 +630,76 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         return;
       }
 
-      final rgbBytes = Uint8List(decodedImage.width * decodedImage.height * 3);
-      int rgbIndex = 0;
-
-      for (int y = 0; y < decodedImage.height; y++) {
-        for (int x = 0; x < decodedImage.width; x++) {
-          final pixel = decodedImage.getPixel(x, y);
-          rgbBytes[rgbIndex] = pixel.r.toInt();
-          rgbBytes[rgbIndex + 1] = pixel.g.toInt();
-          rgbBytes[rgbIndex + 2] = pixel.b.toInt();
-          rgbIndex += 3;
+      // Ensure image is RGB
+      img.Image imageToProcess;
+      if (decodedImage.numChannels == 4) {
+        // Manually create an RGB image from RGBA
+        imageToProcess = img.Image(
+            width: decodedImage.width,
+            height: decodedImage.height,
+            numChannels: 3);
+        for (int y = 0; y < decodedImage.height; ++y) {
+          for (int x = 0; x < decodedImage.width; ++x) {
+            final pixel = decodedImage.getPixel(x, y);
+            imageToProcess.setPixelRgb(x, y, pixel.r, pixel.g, pixel.b);
+          }
         }
+      } else if (decodedImage.numChannels == 3) {
+        imageToProcess = decodedImage;
+      } else {
+        // Handle grayscale or other formats if necessary, or show error
+        _showTemporaryError(
+            'Image must be RGB or RGBA'); // Updated error message
+        return;
       }
+// Now imageToProcess is guaranteed to be an RGB image (numChannels == 3)
+      final rgbBytesList = imageToProcess.toUint8List();
 
+      // Store raw RGB bytes
       setState(() {
         _inputImage = File(pickedFile.path);
-        _rgbBytes = rgbBytes;
-        _inputWidth = decodedImage.width;
-        _inputHeight = decodedImage.height;
-        width = _inputWidth!;
-        height = _inputHeight!;
+        _rgbBytes = rgbBytesList;
+        _inputWidth = imageToProcess.width;
+        _inputHeight = imageToProcess.height;
+        // Reset padding when new image is picked
+        paddingTop = 0;
+        paddingBottom = 0;
+        paddingLeft = 0;
+        paddingRight = 0;
+        // Recalculate dimensions and generate initial mask (which will be just black)
+        _calculateDimensionsAndGenerateMask();
+      });
+    }
+  }
+
+  // Not used, replaced by _generateMask
+  // Future<void> _createMask() async { ... }
+
+  // Takes dimensions as parameters now
+  Future<void> _decodeMaskImage(
+      Uint8List maskData, int width, int height) async {
+    // Convert 1-channel mask to 4-channel RGBA for display
+    final rgbaBytes = Uint8List(width * height * 4);
+    for (int i = 0; i < maskData.length; i++) {
+      final value = maskData[i]; // 0 or 255
+      rgbaBytes[i * 4] = value; // R
+      rgbaBytes[i * 4 + 1] = value; // G
+      rgbaBytes[i * 4 + 2] = value; // B
+      rgbaBytes[i * 4 + 3] = 255; // A (fully opaque)
+    }
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+      rgbaBytes,
+      width,
+      height,
+      ui.PixelFormat.rgba8888,
+      completer.complete,
+    );
+    final maskImage = await completer.future;
+    // Check if mounted before setting state if async operation might outlive widget
+    if (mounted) {
+      setState(() {
+        _maskImageUi = maskImage;
       });
     }
   }
@@ -574,12 +709,13 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     final theme = ShadTheme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Image to Image',
+        title: const Text('Outpainting',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: theme.colorScheme.background,
         elevation: 0,
       ),
       drawer: Drawer(
+        // Keep the drawer for navigation consistency
         width: 240,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.horizontal(right: Radius.circular(4)),
@@ -612,11 +748,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               title: const Text('Text to Image',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
+                _processor?.dispose();
+                Navigator.pop(context); // Close drawer
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
@@ -628,9 +761,13 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               leading: const Icon(LucideIcons.images, size: 32),
               title: const Text('Image to Image',
                   style: TextStyle(fontWeight: FontWeight.bold)),
-              tileColor: theme.colorScheme.secondary.withOpacity(0.2),
               onTap: () {
-                Navigator.pop(context);
+                _processor?.dispose();
+                Navigator.pop(context); // Close drawer
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const Img2ImgPage()),
+                );
               },
             ),
             ListTile(
@@ -638,11 +775,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               title: const Text('Upscaler',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
+                _processor?.dispose();
+                Navigator.pop(context); // Close drawer
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const UpscalerPage()),
@@ -654,11 +788,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               title: const Text('Photomaker',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
+                _processor?.dispose();
+                Navigator.pop(context); // Close drawer
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
@@ -671,11 +802,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               title: const Text('Scribble to Image',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
+                _processor?.dispose();
+                Navigator.pop(context); // Close drawer
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const ScribblePage()),
@@ -687,11 +815,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               title: const Text('Inpainting',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
+                _processor?.dispose();
+                Navigator.pop(context); // Close drawer
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
@@ -699,21 +824,15 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 );
               },
             ),
+            // Current Page: Outpainting
             ListTile(
-              leading: const Icon(LucideIcons.expand, size: 32),
+              leading: const Icon(LucideIcons.expand, size: 32), // Example icon
               title: const Text('Outpainting',
                   style: TextStyle(fontWeight: FontWeight.bold)),
+              tileColor: theme.colorScheme.secondary
+                  .withOpacity(0.2), // Indicate active
               onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const OutpaintingPage()),
-                );
+                Navigator.pop(context); // Close drawer, already here
               },
             ),
           ],
@@ -724,6 +843,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // --- Loading Indicators & Model Info ---
             if (loadingText.isNotEmpty || loadedComponents.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
@@ -826,10 +946,12 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                               style: TextStyle(fontSize: 16))),
                                     ],
                                     columnSpanExtent: (index) {
-                                      if (index == 0)
+                                      if (index == 0) {
                                         return const FixedTableSpanExtent(250);
-                                      if (index == 1)
+                                      }
+                                      if (index == 1) {
                                         return const FixedTableSpanExtent(80);
+                                      }
                                       return null;
                                     },
                                     children: taesdFiles
@@ -946,13 +1068,13 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 padding: const EdgeInsets.only(left: 8.0, top: 4.0),
                 child: Text(
                   _taesdError,
-                  style: theme.textTheme.p.copyWith(
-                    color: Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: theme.textTheme.p
+                      .copyWith(color: Colors.red, fontWeight: FontWeight.bold),
                 ),
               ),
             const SizedBox(height: 16),
+
+            // --- Input Image Picker ---
             GestureDetector(
               onTap: (isModelLoading || isGenerating) ? null : _pickImage,
               child: DottedBorder(
@@ -963,6 +1085,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 dashPattern: const [8, 4],
                 child: Container(
                   height: 300,
+                  width: double.infinity, // Take full width
                   child: Center(
                     child: _inputImage == null
                         ? Column(
@@ -976,7 +1099,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                'Load image',
+                                'Load image for Outpainting',
                                 style: TextStyle(
                                     color: theme.colorScheme.primary
                                         .withOpacity(0.5),
@@ -990,6 +1113,138 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               ),
             ),
             const SizedBox(height: 16),
+
+            // --- Padding Controls ---
+            if (_inputImage != null) ...[
+              const Text('Padding (pixels to add):',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const SizedBox(width: 90, child: Text('Top:')),
+                  Expanded(
+                    child: ShadSelect<int>(
+                      enabled: !(isModelLoading || isGenerating),
+                      initialValue: paddingTop,
+                      placeholder: Text(paddingTop.toString()),
+                      options: paddingOptions
+                          .map((p) =>
+                              ShadOption(value: p, child: Text(p.toString())))
+                          .toList(),
+                      selectedOptionBuilder: (context, value) =>
+                          Text(value.toString()),
+                      onChanged: (int? value) {
+                        if (value != null) {
+                          setState(() {
+                            paddingTop = value;
+                            _calculateDimensionsAndGenerateMask();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const SizedBox(width: 90, child: Text('Bottom:')),
+                  Expanded(
+                    child: ShadSelect<int>(
+                      enabled: !(isModelLoading || isGenerating),
+                      initialValue: paddingBottom,
+                      placeholder: Text(paddingBottom.toString()),
+                      options: paddingOptions
+                          .map((p) =>
+                              ShadOption(value: p, child: Text(p.toString())))
+                          .toList(),
+                      selectedOptionBuilder: (context, value) =>
+                          Text(value.toString()),
+                      onChanged: (int? value) {
+                        if (value != null) {
+                          setState(() {
+                            paddingBottom = value;
+                            _calculateDimensionsAndGenerateMask();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const SizedBox(width: 90, child: Text('Left:')),
+                  Expanded(
+                    child: ShadSelect<int>(
+                      enabled: !(isModelLoading || isGenerating),
+                      initialValue: paddingLeft,
+                      placeholder: Text(paddingLeft.toString()),
+                      options: paddingOptions
+                          .map((p) =>
+                              ShadOption(value: p, child: Text(p.toString())))
+                          .toList(),
+                      selectedOptionBuilder: (context, value) =>
+                          Text(value.toString()),
+                      onChanged: (int? value) {
+                        if (value != null) {
+                          setState(() {
+                            paddingLeft = value;
+                            _calculateDimensionsAndGenerateMask();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const SizedBox(width: 90, child: Text('Right:')),
+                  Expanded(
+                    child: ShadSelect<int>(
+                      enabled: !(isModelLoading || isGenerating),
+                      initialValue: paddingRight,
+                      placeholder: Text(paddingRight.toString()),
+                      options: paddingOptions
+                          .map((p) =>
+                              ShadOption(value: p, child: Text(p.toString())))
+                          .toList(),
+                      selectedOptionBuilder: (context, value) =>
+                          Text(value.toString()),
+                      onChanged: (int? value) {
+                        if (value != null) {
+                          setState(() {
+                            paddingRight = value;
+                            _calculateDimensionsAndGenerateMask();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // --- Display Generated Mask ---
+              if (_maskImageUi != null) ...[
+                const Text('Generated Mask Preview:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Container(
+                  constraints: const BoxConstraints(
+                      maxHeight: 200), // Limit preview height
+                  decoration: BoxDecoration(
+                    border: Border.all(color: theme.colorScheme.border),
+                  ),
+                  child: RawImage(image: _maskImageUi, fit: BoxFit.contain),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ], // End of padding controls
+
+            // --- Prompts ---
             ShadInput(
               key: _promptFieldKey,
               placeholder: const Text('Prompt'),
@@ -1003,6 +1258,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   setState(() => negativePrompt = v ?? ''),
             ),
             const SizedBox(height: 16),
+
+            // --- Advanced Options (LoRA, VAE, etc.) ---
             ShadAccordion<Map<String, dynamic>>(
               children: [
                 ShadAccordionItem<Map<String, dynamic>>(
@@ -1012,6 +1269,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
                       children: [
+                        // --- LoRA Loading and Selection ---
                         Row(
                           children: [
                             SizedBox(
@@ -1169,6 +1427,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                           ],
                         ),
                         const SizedBox(height: 16),
+                        // --- Clip L/G Loading ---
                         Row(
                           children: [
                             Expanded(
@@ -1197,6 +1456,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
+                                          // ... [Clip_L selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1219,12 +1479,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0)
+                                                    if (index == 0) {
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    if (index == 1)
+                                                    }
+                                                    if (index == 1) {
                                                       return const FixedTableSpanExtent(
                                                           80);
+                                                    }
                                                     return null;
                                                   },
                                                   children: clipFiles
@@ -1310,11 +1572,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
+                                                currentModelPath,
+                                                currentFlashAttention,
+                                                currentModelType,
+                                                currentSchedule);
                                           }
                                         });
                                       }
@@ -1351,6 +1612,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
+                                          // ... [Clip_G selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1373,12 +1635,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0)
+                                                    if (index == 0) {
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    if (index == 1)
+                                                    }
+                                                    if (index == 1) {
                                                       return const FixedTableSpanExtent(
                                                           80);
+                                                    }
                                                     return null;
                                                   },
                                                   children: clipFiles
@@ -1464,11 +1728,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
+                                                currentModelPath,
+                                                currentFlashAttention,
+                                                currentModelType,
+                                                currentSchedule);
                                           }
                                         });
                                       }
@@ -1481,6 +1744,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                           ],
                         ),
                         const SizedBox(height: 16),
+                        // --- T5XXL & Embedding Loading ---
                         Row(
                           children: [
                             Expanded(
@@ -1509,6 +1773,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
+                                          // ... [T5XXL selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1531,12 +1796,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0)
+                                                    if (index == 0) {
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    if (index == 1)
+                                                    }
+                                                    if (index == 1) {
                                                       return const FixedTableSpanExtent(
                                                           80);
+                                                    }
                                                     return null;
                                                   },
                                                   children: t5Files
@@ -1622,11 +1889,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
+                                                currentModelPath,
+                                                currentFlashAttention,
+                                                currentModelType,
+                                                currentSchedule);
                                           }
                                         });
                                       }
@@ -1661,11 +1927,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                         Schedule currentSchedule =
                                             _processor!.schedule;
                                         _initializeProcessor(
-                                          currentModelPath,
-                                          currentFlashAttention,
-                                          currentModelType,
-                                          currentSchedule,
-                                        );
+                                            currentModelPath,
+                                            currentFlashAttention,
+                                            currentModelType,
+                                            currentSchedule);
                                       }
                                     });
                                   }
@@ -1676,6 +1941,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                           ],
                         ),
                         const SizedBox(height: 16),
+                        // --- VAE Loading & Options ---
                         Row(
                           children: [
                             Expanded(
@@ -1704,6 +1970,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
+                                          // ... [VAE selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1726,12 +1993,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0)
+                                                    if (index == 0) {
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    if (index == 1)
+                                                    }
+                                                    if (index == 1) {
                                                       return const FixedTableSpanExtent(
                                                           80);
+                                                    }
                                                     return null;
                                                   },
                                                   children: vaeFiles
@@ -1817,11 +2086,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
+                                                currentModelPath,
+                                                currentFlashAttention,
+                                                currentModelType,
+                                                currentSchedule);
                                           }
                                         });
                                       }
@@ -1835,7 +2103,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                             ShadCheckbox(
                               value: useVAE,
                               onChanged: (bool v) {
-                                if (_vaePath == null) {
+                                if (_vaePath == null && v) {
                                   _showTemporaryError(
                                       'Please load VAE model first');
                                   return;
@@ -1852,11 +2120,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                     Schedule currentSchedule =
                                         _processor!.schedule;
                                     _initializeProcessor(
-                                      currentModelPath,
-                                      currentFlashAttention,
-                                      currentModelType,
-                                      currentSchedule,
-                                    );
+                                        currentModelPath,
+                                        currentFlashAttention,
+                                        currentModelType,
+                                        currentSchedule);
                                   }
                                 });
                               },
@@ -1868,7 +2135,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                         ShadCheckbox(
                           value: useVAETiling,
                           onChanged: (bool v) {
-                            if (useTAESD) {
+                            if (useTAESD && v) {
                               _showTemporaryError(
                                   'VAE Tiling is incompatible with TAESD');
                               return;
@@ -1882,11 +2149,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                 SDType currentModelType = _processor!.modelType;
                                 Schedule currentSchedule = _processor!.schedule;
                                 _initializeProcessor(
-                                  currentModelPath,
-                                  currentFlashAttention,
-                                  currentModelType,
-                                  currentSchedule,
-                                );
+                                    currentModelPath,
+                                    currentFlashAttention,
+                                    currentModelType,
+                                    currentSchedule);
                               }
                             });
                           },
@@ -1899,6 +2165,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               ],
             ),
             const SizedBox(height: 16),
+
+            // --- ControlNet Options ---
             Row(
               children: [
                 const Text('Use ControlNet'),
@@ -1908,32 +2176,33 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   onChanged: (bool v) {
                     setState(() {
                       useControlNet = v;
-                      // Only reinitialize if processor is already loaded
                       if (_processor != null) {
                         String currentModelPath = _processor!.modelPath;
                         bool currentFlashAttention =
                             _processor!.useFlashAttention;
                         SDType currentModelType = _processor!.modelType;
                         Schedule currentSchedule = _processor!.schedule;
-
-                        // If ControlNet is turned off, we'll set the controlNetPath to null temporarily
-                        // before reinitializing the processor
                         String? originalControlNetPath = _controlNetPath;
-                        if (!v) {
-                          _controlNetPath = null;
-                        }
-
+                        if (!v)
+                          _controlNetPath =
+                              null; // Disable CN path if toggling off
                         _initializeProcessor(
                           currentModelPath,
                           currentFlashAttention,
                           currentModelType,
                           currentSchedule,
                         );
-
-                        // Restore the original path after reinitialization
-                        if (!v) {
-                          _controlNetPath = originalControlNetPath;
-                        }
+                        if (!v)
+                          _controlNetPath =
+                              originalControlNetPath; // Restore for future toggle
+                      }
+                      // If turning off CN, maybe reset related states?
+                      if (!v) {
+                        _controlImage = null;
+                        _controlRgbBytes = null;
+                        _cannyImage = null;
+                        useCanny = false;
+                        useControlImage = false;
                       }
                     });
                   },
@@ -1943,21 +2212,20 @@ class _Img2ImgPageState extends State<Img2ImgPage>
             if (useControlNet) ...[
               const SizedBox(height: 16),
               ShadAccordion<Map<String, dynamic>>(
+                // Keep consistent with inpainting
                 children: [
-                  // Replace the ControlNet options section with this improved version
                   ShadAccordionItem<Map<String, dynamic>>(
                     value: const {},
                     title: const Text('ControlNet Options'),
                     child: Padding(
                       padding: const EdgeInsets.all(8.0),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment
-                            .start, // Align children to the left
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // --- ControlNet Model Loading ---
                           Row(
                             children: [
                               Expanded(
-                                // Made the button expand to full width to prevent overflow
                                 child: ShadButton(
                                   enabled: !(isModelLoading || isGenerating),
                                   onPressed: () async {
@@ -1986,6 +2254,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             await showShadDialog<String>(
                                           context: context,
                                           builder: (BuildContext context) {
+                                            // ... [ControlNet selection dialog - same as inpainting] ...
                                             return ShadDialog.alert(
                                               constraints: const BoxConstraints(
                                                   maxWidth: 400),
@@ -2011,12 +2280,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                                                       16))),
                                                     ],
                                                     columnSpanExtent: (index) {
-                                                      if (index == 0)
+                                                      if (index == 0) {
                                                         return const FixedTableSpanExtent(
                                                             250);
-                                                      if (index == 1)
+                                                      }
+                                                      if (index == 1) {
                                                         return const FixedTableSpanExtent(
                                                             80);
+                                                      }
                                                       return null;
                                                     },
                                                     children: controlNetFiles
@@ -2103,11 +2374,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                               Schedule currentSchedule =
                                                   _processor!.schedule;
                                               _initializeProcessor(
-                                                currentModelPath,
-                                                currentFlashAttention,
-                                                currentModelType,
-                                                currentSchedule,
-                                              );
+                                                  currentModelPath,
+                                                  currentFlashAttention,
+                                                  currentModelType,
+                                                  currentSchedule);
                                             }
                                           });
                                         }
@@ -2120,27 +2390,38 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                             ],
                           ),
                           const SizedBox(height: 16),
-                          // Left-aligned checkbox for "Use Image Reference"
+                          // --- Control Image Reference ---
                           Align(
                             alignment: Alignment.centerLeft,
                             child: ShadCheckbox(
                               value: useControlImage,
-                              onChanged: (bool v) {
-                                setState(() {
-                                  useControlImage = v;
-                                  if (!v) {
-                                    _controlImage = null;
-                                    _controlRgbBytes = null;
-                                    _controlWidth = null;
-                                    _controlHeight = null;
-                                  }
-                                });
-                              },
+                              onChanged: (_controlNetPath == null ||
+                                      isModelLoading ||
+                                      isGenerating)
+                                  ? null
+                                  : (bool v) {
+                                      // Enable only if CN model loaded
+                                      setState(() {
+                                        useControlImage = v;
+                                        if (!v) {
+                                          _controlImage = null;
+                                          _controlRgbBytes = null;
+                                          _controlWidth = null;
+                                          _controlHeight = null;
+                                          _cannyImage =
+                                              null; // Clear canny result if ref image removed
+                                          useCanny =
+                                              false; // Disable canny if ref image removed
+                                        }
+                                        // Re-initialize processor if CN image status changes? Maybe not needed unless image data itself changes.
+                                      });
+                                    },
                               label: const Text('Use Image Reference'),
                             ),
                           ),
                           if (useControlImage) ...[
                             const SizedBox(height: 16),
+                            // --- Control Image Picker ---
                             GestureDetector(
                               onTap: (isModelLoading || isGenerating)
                                   ? null
@@ -2157,39 +2438,68 @@ class _Img2ImgPageState extends State<Img2ImgPage>
 
                                         if (decodedImage == null) {
                                           _showTemporaryError(
-                                              'Failed to decode image');
+                                              'Failed to decode control image');
                                           return;
                                         }
 
-                                        final rgbBytes = Uint8List(
-                                            decodedImage.width *
-                                                decodedImage.height *
-                                                3);
-                                        int rgbIndex = 0;
-
-                                        for (int y = 0;
-                                            y < decodedImage.height;
-                                            y++) {
-                                          for (int x = 0;
-                                              x < decodedImage.width;
-                                              x++) {
-                                            final pixel =
-                                                decodedImage.getPixel(x, y);
-                                            rgbBytes[rgbIndex] =
-                                                pixel.r.toInt();
-                                            rgbBytes[rgbIndex + 1] =
-                                                pixel.g.toInt();
-                                            rgbBytes[rgbIndex + 2] =
-                                                pixel.b.toInt();
-                                            rgbIndex += 3;
+                                        // Ensure RGB format for control image
+                                        img.Image imageToProcess;
+                                        if (decodedImage.numChannels == 4) {
+                                          // Manually create an RGB image from RGBA
+                                          imageToProcess = img.Image(
+                                              width: decodedImage.width,
+                                              height: decodedImage.height,
+                                              numChannels: 3);
+                                          for (int y = 0;
+                                              y < decodedImage.height;
+                                              ++y) {
+                                            for (int x = 0;
+                                                x < decodedImage.width;
+                                                ++x) {
+                                              final pixel =
+                                                  decodedImage.getPixel(x, y);
+                                              imageToProcess.setPixelRgb(x, y,
+                                                  pixel.r, pixel.g, pixel.b);
+                                            }
                                           }
+                                        } else if (decodedImage.numChannels ==
+                                            3) {
+                                          imageToProcess = decodedImage;
+                                        } else {
+                                          // Handle grayscale or other formats if necessary, or show error
+                                          _showTemporaryError(
+                                              'Image must be RGB or RGBA'); // Updated error message
+                                          return;
                                         }
+// Now imageToProcess is guaranteed to be an RGB image (numChannels == 3)
+                                        final rgbBytesList =
+                                            imageToProcess.toUint8List();
 
                                         setState(() {
                                           _controlImage = File(pickedFile.path);
-                                          _controlRgbBytes = rgbBytes;
-                                          _controlWidth = decodedImage.width;
-                                          _controlHeight = decodedImage.height;
+                                          _controlRgbBytes = rgbBytesList;
+                                          _controlWidth = imageToProcess.width;
+                                          _controlHeight =
+                                              imageToProcess.height;
+                                          // Reset canny if new control image loaded
+                                          useCanny = false;
+                                          _cannyImage = null;
+                                          // Need to re-initialize processor with new control image data
+                                          if (_processor != null) {
+                                            String currentModelPath =
+                                                _processor!.modelPath;
+                                            bool currentFlashAttention =
+                                                _processor!.useFlashAttention;
+                                            SDType currentModelType =
+                                                _processor!.modelType;
+                                            Schedule currentSchedule =
+                                                _processor!.schedule;
+                                            _initializeProcessor(
+                                                currentModelPath,
+                                                currentFlashAttention,
+                                                currentModelType,
+                                                currentSchedule);
+                                          }
                                         });
                                       }
                                     },
@@ -2209,21 +2519,18 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             mainAxisAlignment:
                                                 MainAxisAlignment.center,
                                             children: [
-                                              Icon(
-                                                Icons.add_photo_alternate,
-                                                size: 64,
-                                                color: theme.colorScheme.primary
-                                                    .withOpacity(0.5),
-                                              ),
+                                              Icon(Icons.add_photo_alternate,
+                                                  size: 64,
+                                                  color: theme
+                                                      .colorScheme.primary
+                                                      .withOpacity(0.5)),
                                               const SizedBox(height: 12),
-                                              Text(
-                                                'Load control image',
-                                                style: TextStyle(
-                                                    color: theme
-                                                        .colorScheme.primary
-                                                        .withOpacity(0.5),
-                                                    fontSize: 16),
-                                              ),
+                                              Text('Load control image',
+                                                  style: TextStyle(
+                                                      color: theme
+                                                          .colorScheme.primary
+                                                          .withOpacity(0.5),
+                                                      fontSize: 16)),
                                             ],
                                           )
                                         : Image.file(_controlImage!,
@@ -2233,7 +2540,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                               ),
                             ),
                             const SizedBox(height: 16),
-                            // Left-aligned checkbox for "Use Canny"
+                            // --- Canny Option ---
                             Align(
                               alignment: Alignment.centerLeft,
                               child: Row(
@@ -2246,53 +2553,55 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                             isCannyProcessing)
                                         ? null
                                         : (bool v) {
+                                            // Enable only if control image exists
                                             setState(() {
                                               useCanny = v;
-                                              if (v && _controlImage != null) {
-                                                // Process the image with Canny
-                                                _processCannyImage();
+                                              if (v) {
+                                                _processCannyImage(); // Generate canny edges
+                                              } else {
+                                                _cannyImage =
+                                                    null; // Clear canny result
+                                                // Re-initialize processor without canny data if needed (or handle in generate call)
                                               }
                                             });
                                           },
-                                    label: const Text('Use Canny'),
+                                    label: const Text('Use Canny Preprocessor'),
                                   ),
                                   if (isCannyProcessing)
                                     Padding(
                                       padding: const EdgeInsets.only(left: 8.0),
                                       child: SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: theme.colorScheme.primary,
-                                        ),
-                                      ),
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color:
+                                                  theme.colorScheme.primary)),
                                     ),
                                 ],
                               ),
                             ),
                             if (useCanny && _cannyImage != null) ...[
                               const SizedBox(height: 16),
-                              const Text('Canny Edge Detection Result',
+                              const Text('Canny Edge Preview:',
                                   style:
                                       TextStyle(fontWeight: FontWeight.bold)),
                               const SizedBox(height: 8),
                               Container(
                                 decoration: BoxDecoration(
-                                  border: Border.all(
-                                      color: theme.colorScheme.primary
-                                          .withOpacity(0.5)),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                height: 200,
+                                    border: Border.all(
+                                        color: theme.colorScheme.primary
+                                            .withOpacity(0.5)),
+                                    borderRadius: BorderRadius.circular(8)),
+                                constraints: const BoxConstraints(
+                                    maxHeight: 200), // Limit preview height
                                 width: double.infinity,
-                                child: Center(
-                                  child: _cannyImage!,
-                                ),
+                                child: Center(child: _cannyImage!),
                               ),
+                              const SizedBox(height: 16),
                             ],
-                          ],
-                          const SizedBox(height: 16),
+                          ], // End of if(useControlImage)
+                          // --- Control Strength ---
                           Row(
                             children: [
                               const Text('Control Strength'),
@@ -2303,8 +2612,27 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                   min: 0.0,
                                   max: 1.0,
                                   divisions: 20,
-                                  onChanged: (v) =>
-                                      setState(() => controlStrength = v),
+                                  onChanged: (isModelLoading || isGenerating)
+                                      ? null
+                                      : (v) => setState(() {
+                                            controlStrength = v;
+                                            // Re-initialize processor with new strength
+                                            if (_processor != null) {
+                                              String currentModelPath =
+                                                  _processor!.modelPath;
+                                              bool currentFlashAttention =
+                                                  _processor!.useFlashAttention;
+                                              SDType currentModelType =
+                                                  _processor!.modelType;
+                                              Schedule currentSchedule =
+                                                  _processor!.schedule;
+                                              _initializeProcessor(
+                                                  currentModelPath,
+                                                  currentFlashAttention,
+                                                  currentModelType,
+                                                  currentSchedule);
+                                            }
+                                          }),
                                 ),
                               ),
                               Text(controlStrength.toStringAsFixed(2)),
@@ -2316,15 +2644,19 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   ),
                 ],
               ),
-            ],
+            ], // End of if(useControlNet)
             const SizedBox(height: 16),
+
+            // --- Sampling Parameters ---
             Row(
               children: [
                 const Text('Sampling Method'),
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<String>(
-                    placeholder: const Text('euler_a'),
+                    enabled: !(isModelLoading || isGenerating),
+                    initialValue: samplingMethod,
+                    placeholder: Text(samplingMethod),
                     options: samplingMethods
                         .map((method) =>
                             ShadOption(value: method, child: Text(method)))
@@ -2339,7 +2671,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
             const SizedBox(height: 16),
             Row(
               children: [
-                const Text('CFG'),
+                const Text('CFG Scale'),
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSlider(
@@ -2347,7 +2679,9 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                     min: 1,
                     max: 20,
                     divisions: 38,
-                    onChanged: (v) => setState(() => cfg = v),
+                    onChanged: (isModelLoading || isGenerating)
+                        ? null
+                        : (v) => setState(() => cfg = v),
                   ),
                 ),
                 Text(cfg.toStringAsFixed(1)),
@@ -2362,18 +2696,21 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   child: ShadSlider(
                     initialValue: steps.toDouble(),
                     min: 1,
-                    max: 50,
+                    max: 50, // Adjust max steps if needed
                     divisions: 49,
-                    onChanged: (v) => setState(() => steps = v.toInt()),
+                    onChanged: (isModelLoading || isGenerating)
+                        ? null
+                        : (v) => setState(() => steps = v.toInt()),
                   ),
                 ),
                 Text(steps.toString()),
               ],
             ),
             const SizedBox(height: 16),
+            // Strength (Denoising Strength for img2img)
             Row(
               children: [
-                const Text('Strength'),
+                const Text('Denoising Strength'),
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSlider(
@@ -2381,101 +2718,205 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                     min: 0.0,
                     max: 1.0,
                     divisions: 20,
-                    onChanged: (v) => setState(() => strength = v),
+                    onChanged: (isModelLoading || isGenerating)
+                        ? null
+                        : (v) => setState(() => strength = v),
                   ),
                 ),
                 Text(strength.toStringAsFixed(2)),
               ],
             ),
             const SizedBox(height: 16),
+
+            // --- Output Dimensions (Display Only) ---
             Row(
               children: [
-                const Text('Width'),
+                const Text('Width'), // Keep the label consistent
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getWidthOptions()
-                        .map((w) =>
-                            ShadOption(value: w, child: Text(w.toString())))
-                        .toList(),
-                    selectedOptionBuilder: (context, value) =>
-                        Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => width = value);
-                    },
+                    enabled: false, // Disable the dropdown
+                    placeholder: Text(
+                      // Use placeholder to display current value
+                      _inputImage == null ? 'N/A' : outputWidth.toString(),
+                      style: TextStyle(
+                        color: Theme.of(context)
+                            .disabledColor, // Indicate disabled state
+                      ),
+                    ),
+                    options: const [], // No options needed as it's disabled
+                    selectedOptionBuilder: (context, value) => Text(value
+                        .toString()), // Builder (won't be used when disabled)
+                    // No onChanged needed
                   ),
                 ),
                 const SizedBox(width: 16),
-                const Text('Height'),
+                const Text('Height'), // Keep the label consistent
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getHeightOptions()
-                        .map((h) =>
-                            ShadOption(value: h, child: Text(h.toString())))
-                        .toList(),
-                    selectedOptionBuilder: (context, value) =>
-                        Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => height = value);
-                    },
+                    enabled: false, // Disable the dropdown
+                    placeholder: Text(
+                      // Use placeholder to display current value
+                      _inputImage == null ? 'N/A' : outputHeight.toString(),
+                      style: TextStyle(
+                        color: Theme.of(context)
+                            .disabledColor, // Indicate disabled state
+                      ),
+                    ),
+                    options: const [], // No options needed as it's disabled
+                    selectedOptionBuilder: (context, value) => Text(value
+                        .toString()), // Builder (won't be used when disabled)
+                    // No onChanged needed
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+
+            // --- Seed ---
             const Text('Seed (-1 for random)'),
             const SizedBox(height: 8),
             ShadInput(
+              enabled: !(isModelLoading || isGenerating),
               placeholder: const Text('Seed'),
               keyboardType: TextInputType.number,
               onChanged: (String? v) => setState(() => seed = v ?? "-1"),
               initialValue: seed,
             ),
             const SizedBox(height: 16),
+
+            // --- Generate Button ---
             ShadButton(
               enabled: !(isModelLoading || isGenerating),
               onPressed: () {
+                // --- Pre-generation Checks ---
                 if (_processor == null) {
                   _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please Load a model first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
-                    setState(() {
-                      _modelError = '';
-                    });
-                  });
+                  setState(() => _modelError = 'Please Load a model first');
+                  _modelErrorTimer = Timer(const Duration(seconds: 10),
+                      () => setState(() => _modelError = ''));
                   return;
                 }
-                if (_inputImage == null) {
+                if (_inputImage == null ||
+                    _rgbBytes == null ||
+                    _inputWidth == null ||
+                    _inputHeight == null) {
                   _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please select an image first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
-                    setState(() {
-                      _modelError = '';
-                    });
-                  });
+                  setState(
+                      () => _modelError = 'Please select an input image first');
+                  _modelErrorTimer = Timer(const Duration(seconds: 10),
+                      () => setState(() => _modelError = ''));
                   return;
                 }
+                // Ensure mask is generated and dimensions are calculated
+                _calculateDimensionsAndGenerateMask(); // Recalculate dimensions and mask
+                if (_maskData == null) {
+                  _modelErrorTimer?.cancel();
+                  setState(() =>
+                      _modelError = 'Failed to generate outpainting mask');
+                  _modelErrorTimer = Timer(const Duration(seconds: 10),
+                      () => setState(() => _modelError = ''));
+                  return;
+                }
+                // Use the dimensions calculated by _calculateDimensionsAndGenerateMask
+                final int finalOutputWidth = outputWidth;
+                final int finalOutputHeight = outputHeight;
+
+                if (finalOutputWidth <= 0 || finalOutputHeight <= 0) {
+                  _modelErrorTimer?.cancel();
+                  setState(() =>
+                      _modelError = 'Invalid output dimensions calculated');
+                  _modelErrorTimer = Timer(const Duration(seconds: 10),
+                      () => setState(() => _modelError = ''));
+                  return;
+                }
+
+                // --- Create Padded Input Image Data ---
+                // Create a new buffer for the padded image, filled with grey (127, 127, 127)
+                final int paddedDataSize =
+                    finalOutputWidth * finalOutputHeight * 3;
+                final paddedRgbBytes = Uint8List(paddedDataSize);
+                for (int i = 0; i < paddedDataSize; i++) {
+                  paddedRgbBytes[i] = 127; // Fill with mid-grey
+                }
+
+                // Copy the original image (_rgbBytes) onto the grey padded buffer
+                for (int y = 0; y < _inputHeight!; y++) {
+                  for (int x = 0; x < _inputWidth!; x++) {
+                    // Calculate source index in original _rgbBytes
+                    int srcIndex = (y * _inputWidth! + x) * 3;
+                    // Calculate destination index in paddedRgbBytes (offset by padding)
+                    int dstIndex = ((y + paddingTop) * finalOutputWidth +
+                            (x + paddingLeft)) *
+                        3;
+
+                    // Ensure indices are within bounds (should be, but good practice)
+                    if (srcIndex + 2 < _rgbBytes!.length &&
+                        dstIndex + 2 < paddedRgbBytes.length) {
+                      paddedRgbBytes[dstIndex] = _rgbBytes![srcIndex]; // R
+                      paddedRgbBytes[dstIndex + 1] =
+                          _rgbBytes![srcIndex + 1]; // G
+                      paddedRgbBytes[dstIndex + 2] =
+                          _rgbBytes![srcIndex + 2]; // B
+                    }
+                  }
+                }
+                // --- End of Padded Input Image Creation ---
+
+                // Determine ControlNet input (logic remains the same)
+                Uint8List? finalControlImageData = _controlRgbBytes;
+                int? finalControlWidth = _controlWidth;
+                int? finalControlHeight = _controlHeight;
+
+                if (useControlNet &&
+                    useControlImage &&
+                    useCanny &&
+                    _cannyProcessor?.resultRgbBytes != null) {
+                  finalControlImageData = _ensureRgbFormat(
+                      _cannyProcessor!.resultRgbBytes!,
+                      _cannyProcessor!.resultWidth!,
+                      _cannyProcessor!.resultHeight!);
+                  finalControlWidth = _cannyProcessor!.resultWidth;
+                  finalControlHeight = _cannyProcessor!.resultHeight;
+                } else if (useControlNet && !useControlImage) {
+                  finalControlImageData = null;
+                  finalControlWidth = null;
+                  finalControlHeight = null;
+                } else if (!useControlNet) {
+                  finalControlImageData = null;
+                  finalControlWidth = null;
+                  finalControlHeight = null;
+                }
+
+                // --- Start Generation ---
                 setState(() {
                   isGenerating = true;
                   _modelError = '';
                   status = 'Generating image...';
                   progress = 0;
+                  _generatedImage = null; // Clear previous image
                 });
 
                 _processor!.generateImg2Img(
-                  inputImageData: _rgbBytes!,
-                  inputWidth: _inputWidth!,
-                  inputHeight: _inputHeight!,
-                  channel: 3,
-                  outputWidth: width,
-                  outputHeight: height,
+                  // Input Image (NOW THE PADDED VERSION)
+                  inputImageData: paddedRgbBytes, // Send the grey-padded buffer
+                  inputWidth:
+                      finalOutputWidth, // Width is the final output width
+                  inputHeight:
+                      finalOutputHeight, // Height is the final output height
+                  channel: 3, // Input is RGB
+
+                  // Output Dimensions (should match padded input and mask)
+                  outputWidth: finalOutputWidth,
+                  outputHeight: finalOutputHeight,
+
+                  // Mask (Generated based on padding, dimensions match output)
+                  maskImageData: _maskData!,
+                  maskWidth: finalOutputWidth, // Mask dimensions match output
+                  maskHeight: finalOutputHeight,
+
+                  // Other Parameters
                   prompt: prompt,
                   negativePrompt: negativePrompt,
                   clipSkip: clipSkip.toInt(),
@@ -2489,25 +2930,15 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                         orElse: () => SampleMethod.EULER_A,
                       )
                       .index,
-                  strength: strength,
+                  strength: strength, // Denoising strength
                   seed: int.tryParse(seed) ?? -1,
                   batchCount: 1,
-                  controlImageData:
-                      useCanny && _cannyProcessor?.resultRgbBytes != null
-                          ? _ensureRgbFormat(
-                              _cannyProcessor!.resultRgbBytes!,
-                              _cannyProcessor!.resultWidth!,
-                              _cannyProcessor!.resultHeight!)
-                          : _controlRgbBytes,
-                  controlImageWidth:
-                      useCanny && _cannyProcessor?.resultWidth != null
-                          ? _cannyProcessor!.resultWidth
-                          : _controlWidth,
-                  controlImageHeight:
-                      useCanny && _cannyProcessor?.resultHeight != null
-                          ? _cannyProcessor!.resultHeight
-                          : _controlHeight,
-                  controlStrength: controlStrength,
+
+                  // ControlNet Parameters
+                  controlImageData: finalControlImageData,
+                  controlImageWidth: finalControlWidth,
+                  controlImageHeight: finalControlHeight,
+                  controlStrength: useControlNet ? controlStrength : 0.0,
                 );
               },
               child: const Text('Generate'),
@@ -2522,16 +2953,20 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 ),
               ),
             const SizedBox(height: 16),
-            LinearProgressIndicator(
-              value: progress,
-              backgroundColor: theme.colorScheme.background,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(height: 8),
-            Text(status, style: theme.textTheme.p),
+
+            // --- Progress Indicator ---
+            if (isGenerating || progress > 0) ...[
+              LinearProgressIndicator(
+                value: progress,
+                backgroundColor: theme.colorScheme.background,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 8),
+              Text(status, style: theme.textTheme.p),
+            ],
             if (_generatedImage != null) ...[
               const SizedBox(height: 20),
-              _generatedImage!,
+              Center(child: _generatedImage!), // Center the generated image
             ],
           ],
         ),
