@@ -67,6 +67,7 @@ class _MaskEditorState extends State<MaskEditor> {
   late final List<Stroke> strokes; // Changed to late final
   Stroke? currentStroke;
   double brushSize = 10.0;
+  final GlobalKey _canvasKey = GlobalKey(); // Add GlobalKey for the canvas area
 
   @override
   void initState() {
@@ -193,19 +194,22 @@ class _MaskEditorState extends State<MaskEditor> {
                 child: SizedBox(
                   width: widget.width.toDouble(),
                   height: widget.height.toDouble(),
-                  child: Stack(
-                    children: [
-                      Image.file(
-                        widget.imageFile,
-                        width: widget.width.toDouble(),
-                        height: widget.height.toDouble(),
-                        fit: BoxFit.fill,
-                      ),
-                      // This is key: using exact dimensions of the original image
-                      SizedBox(
-                        width: widget.width.toDouble(),
-                        height: widget.height.toDouble(),
-                        child: ClipRect(
+                  child: SizedBox(
+                    // Wrap Stack in SizedBox with Key
+                    key: _canvasKey,
+                    width: widget.width.toDouble(),
+                    height: widget.height.toDouble(),
+                    child: Stack(
+                      children: [
+                        Image.file(
+                          widget.imageFile,
+                          width: widget.width.toDouble(),
+                          height: widget.height.toDouble(),
+                          fit: BoxFit.fill,
+                        ),
+                        // This is key: using exact dimensions of the original image
+                        // Removed the outer SizedBox, key is now on the parent SizedBox
+                        ClipRect(
                           child: Stack(
                             children: [
                               CustomPaint(
@@ -215,32 +219,24 @@ class _MaskEditorState extends State<MaskEditor> {
                               ),
                               GestureDetector(
                                 onPanStart: (details) {
-                                  RenderBox box =
-                                      context.findRenderObject() as RenderBox;
-                                  Offset localPosition =
-                                      box.globalToLocal(details.globalPosition);
+                                  // Use the GlobalKey to find the RenderBox
+                                  final RenderBox? canvasBox = _canvasKey
+                                      .currentContext
+                                      ?.findRenderObject() as RenderBox?;
+                                  if (canvasBox == null) return;
 
-                                  // Adjust for FittedBox scaling
-                                  RenderBox sizedBox =
-                                      context.findRenderObject() as RenderBox;
-                                  Rect sizedBoxRect =
-                                      Offset.zero & sizedBox.size;
-                                  Rect imageRect = Rect.fromLTWH(
-                                    (sizedBoxRect.width - widget.width) / 2,
-                                    (sizedBoxRect.height - widget.height) / 2,
-                                    widget.width.toDouble(),
-                                    widget.height.toDouble(),
-                                  );
+                                  // Convert global position to local position relative to the canvasBox
+                                  Offset localPosition = canvasBox
+                                      .globalToLocal(details.globalPosition);
 
-                                  // Check if within the image bounds
-                                  if (!imageRect.contains(localPosition)) {
-                                    return;
-                                  }
+                                  // Clamp coordinates to the image boundaries
+                                  double x = localPosition.dx
+                                      .clamp(0.0, widget.width.toDouble());
+                                  double y = localPosition.dy
+                                      .clamp(0.0, widget.height.toDouble());
 
-                                  // Normalize coordinates to the original image dimensions
-                                  double x =
-                                      (localPosition.dx - imageRect.left);
-                                  double y = (localPosition.dy - imageRect.top);
+                                  // Check if the starting point is within bounds (optional, clamping handles it)
+                                  // if (x < 0 || x > widget.width || y < 0 || y > widget.height) return;
 
                                   setState(() {
                                     currentStroke =
@@ -251,33 +247,24 @@ class _MaskEditorState extends State<MaskEditor> {
                                 onPanUpdate: (details) {
                                   if (currentStroke == null) return;
 
-                                  RenderBox box =
-                                      context.findRenderObject() as RenderBox;
-                                  Offset localPosition =
-                                      box.globalToLocal(details.globalPosition);
+                                  // Use the GlobalKey to find the RenderBox
+                                  final RenderBox? canvasBox = _canvasKey
+                                      .currentContext
+                                      ?.findRenderObject() as RenderBox?;
+                                  if (canvasBox == null) return;
 
-                                  // Adjust for FittedBox scaling
-                                  RenderBox sizedBox =
-                                      context.findRenderObject() as RenderBox;
-                                  Rect sizedBoxRect =
-                                      Offset.zero & sizedBox.size;
-                                  Rect imageRect = Rect.fromLTWH(
-                                    (sizedBoxRect.width - widget.width) / 2,
-                                    (sizedBoxRect.height - widget.height) / 2,
-                                    widget.width.toDouble(),
-                                    widget.height.toDouble(),
-                                  );
+                                  // Convert global position to local position relative to the canvasBox
+                                  Offset localPosition = canvasBox
+                                      .globalToLocal(details.globalPosition);
 
-                                  // Normalize coordinates to the original image dimensions
-                                  double x =
-                                      (localPosition.dx - imageRect.left);
-                                  double y = (localPosition.dy - imageRect.top);
-
-                                  // Clamp to image boundaries
-                                  x = x.clamp(0, widget.width.toDouble());
-                                  y = y.clamp(0, widget.height.toDouble());
+                                  // Clamp coordinates to the image boundaries
+                                  double x = localPosition.dx
+                                      .clamp(0.0, widget.width.toDouble());
+                                  double y = localPosition.dy
+                                      .clamp(0.0, widget.height.toDouble());
 
                                   setState(() {
+                                    // Add the clamped point to the current stroke
                                     currentStroke!.points.add(Offset(x, y));
                                   });
                                 },
@@ -290,8 +277,8 @@ class _MaskEditorState extends State<MaskEditor> {
                             ],
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
