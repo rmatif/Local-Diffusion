@@ -76,6 +76,8 @@ class _InpaintingPageState extends State<InpaintingPage>
   double strength = 0.5;
   Uint8List? _maskData;
   ui.Image? _maskImageUi;
+  List<Stroke> _currentStrokes = []; // Store strokes
+  bool _invertMask = false; // State for the checkbox
 
   String? _taesdPath;
   String? _loraPath;
@@ -273,9 +275,57 @@ class _InpaintingPageState extends State<InpaintingPage>
 
       setState(() {
         _maskData = maskData;
+        _currentStrokes.clear(); // Clear strokes if loading external mask
         _decodeMaskImage(maskData);
       });
     }
+  }
+
+  // Generate mask data from strokes
+  Future<Uint8List?> _generateMaskDataFromStrokes(List<Stroke> strokes) async {
+    if (_inputWidth == null || _inputHeight == null) return null;
+
+    final maskData = Uint8List(_inputWidth! * _inputHeight!);
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder,
+        Rect.fromLTWH(0, 0, _inputWidth!.toDouble(), _inputHeight!.toDouble()));
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, _inputWidth!.toDouble(), _inputHeight!.toDouble()),
+      Paint()..color = Colors.black,
+    );
+
+    final paint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    for (final stroke in strokes) {
+      if (stroke.points.isEmpty) continue;
+      paint.strokeWidth = stroke.brushSize;
+      final path = Path();
+      path.moveTo(stroke.points.first.dx, stroke.points.first.dy);
+      for (int i = 1; i < stroke.points.length; i++) {
+        path.lineTo(stroke.points[i].dx, stroke.points[i].dy);
+      }
+      canvas.drawPath(path, paint);
+    }
+
+    final picture = recorder.endRecording();
+    final maskImage = await picture.toImage(_inputWidth!, _inputHeight!);
+    final byteData =
+        await maskImage.toByteData(format: ui.ImageByteFormat.rawRgba);
+
+    if (byteData == null) {
+      throw Exception('Failed to generate mask data from strokes');
+    }
+
+    final bytes = byteData.buffer.asUint8List();
+    for (int i = 0; i < maskData.length; i++) {
+      maskData[i] = bytes[i * 4] > 128 ? 255 : 0;
+    }
+
+    return maskData;
   }
 
   void _initializeProcessor(String modelPath, bool useFlashAttention,
@@ -616,21 +666,34 @@ class _InpaintingPageState extends State<InpaintingPage>
       _showTemporaryError('Please select an image first');
       return;
     }
-    final maskData = await Navigator.push<Uint8List>(
+    // Pass existing strokes to MaskEditor
+    final updatedStrokes = await Navigator.push<List<Stroke>>(
       context,
       MaterialPageRoute(
         builder: (context) => MaskEditor(
           imageFile: _inputImage!,
           width: _inputWidth!,
           height: _inputHeight!,
+          initialStrokes: _currentStrokes, // Pass current strokes
         ),
       ),
     );
-    if (maskData != null) {
-      setState(() {
-        _maskData = maskData;
-        _decodeMaskImage(maskData);
-      });
+    if (updatedStrokes != null) {
+      _currentStrokes = updatedStrokes; // Update strokes
+      // Generate mask data and UI image from the updated strokes
+      final newMaskData = await _generateMaskDataFromStrokes(_currentStrokes);
+      if (newMaskData != null) {
+        setState(() {
+          _maskData = newMaskData;
+          _decodeMaskImage(newMaskData);
+        });
+      } else {
+        // Handle case where mask generation failed or was cancelled
+        setState(() {
+          _maskData = null;
+          _maskImageUi = null;
+        });
+      }
     }
   }
 
@@ -1080,7 +1143,10 @@ class _InpaintingPageState extends State<InpaintingPage>
                 ShadButton(
                   onPressed: _createMask,
                   enabled: !(isModelLoading || isGenerating),
-                  child: const Text('Create Mask'),
+                  // Update button text based on whether a mask exists
+                  child: Text(_maskData != null || _currentStrokes.isNotEmpty
+                      ? 'Edit Mask'
+                      : 'Create Mask'),
                 ),
                 const SizedBox(width: 8),
                 ShadButton(
@@ -1092,8 +1158,16 @@ class _InpaintingPageState extends State<InpaintingPage>
             ),
             if (_maskImageUi != null) ...[
               const SizedBox(height: 16),
-              const Text('Mask:'),
-              RawImage(image: _maskImageUi, fit: BoxFit.contain),
+              const Text('Mask Preview:'),
+              RawImage(
+                  image: _maskImageUi!,
+                  fit: BoxFit.contain), // Assume not null here
+              const SizedBox(height: 8),
+              ShadCheckbox(
+                value: _invertMask,
+                onChanged: (v) => setState(() => _invertMask = v),
+                label: const Text('Invert Mask'),
+              ),
             ],
             const SizedBox(height: 16),
             ShadInput(
@@ -2601,7 +2675,10 @@ class _InpaintingPageState extends State<InpaintingPage>
                           ? _cannyProcessor!.resultHeight
                           : _controlHeight,
                   controlStrength: controlStrength,
-                  maskImageData: _maskData,
+                  // Apply inversion if checkbox is checked
+                  maskImageData: _maskData == null
+                      ? null
+                      : (_invertMask ? _invertMaskData(_maskData!) : _maskData),
                   maskWidth: _maskData != null ? _inputWidth : null,
                   maskHeight: _maskData != null ? _inputHeight : null,
                 );
@@ -2633,5 +2710,14 @@ class _InpaintingPageState extends State<InpaintingPage>
         ),
       ),
     );
+  }
+
+  // Helper function to invert mask data
+  Uint8List _invertMaskData(Uint8List maskData) {
+    final invertedData = Uint8List(maskData.length);
+    for (int i = 0; i < maskData.length; i++) {
+      invertedData[i] = 255 - maskData[i];
+    }
+    return invertedData;
   }
 }

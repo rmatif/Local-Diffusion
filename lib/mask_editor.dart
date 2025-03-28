@@ -48,11 +48,13 @@ class MaskEditor extends StatefulWidget {
   final File imageFile;
   final int width;
   final int height;
+  final List<Stroke>? initialStrokes; // Added initialStrokes
 
   const MaskEditor({
     required this.imageFile,
     required this.width,
     required this.height,
+    this.initialStrokes, // Added initialStrokes
     super.key,
   });
 
@@ -62,13 +64,15 @@ class MaskEditor extends StatefulWidget {
 
 class _MaskEditorState extends State<MaskEditor> {
   ui.Image? image;
-  final List<Stroke> strokes = [];
+  late final List<Stroke> strokes; // Changed to late final
   Stroke? currentStroke;
   double brushSize = 10.0;
 
   @override
   void initState() {
     super.initState();
+    // Initialize strokes from widget.initialStrokes or create a new list
+    strokes = List<Stroke>.from(widget.initialStrokes ?? []);
     _loadImage();
   }
 
@@ -173,13 +177,11 @@ class _MaskEditorState extends State<MaskEditor> {
           ),
           IconButton(
             icon: const Icon(Icons.save),
-            onPressed: () async {
-              final maskData = await _generateMaskData();
-              if (mounted) {
-                Navigator.pop(context, maskData);
-              }
+            onPressed: () {
+              // Return the strokes list instead of generated data
+              Navigator.pop(context, strokes);
             },
-            tooltip: 'Save Mask',
+            tooltip: 'Save Strokes',
           ),
         ],
       ),
