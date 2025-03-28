@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:developer' as developer;
+import 'dart:math' as math; // Import dart:math
 
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -74,6 +75,18 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   int? _inputHeight;
   double strength = 0.5;
 
+  // --- State for Cropping ---
+  int _maxCropWidth = 512; // Default, will be updated
+  int _maxCropHeight = 512; // Default, will be updated
+  // Use 'width' and 'height' state variables for current slider values
+  Rect _cropRect = Rect.zero; // Position relative to the displayed image widget
+  Size _imageDisplaySize = Size.zero; // Size of the image widget as displayed
+  final GlobalKey _imageKey = GlobalKey();
+  Offset _dragStartOffset = Offset.zero;
+  Rect _dragStartCropRect = Rect.zero;
+  bool _showCropUI = false; // Flag to control visibility of crop UI
+  // --- End State for Cropping ---
+
   String? _taesdPath;
   String? _loraPath;
   String? _clipLPath;
@@ -120,16 +133,34 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     });
   }
 
+  // Restore getWidthOptions and getHeightOptions
   List<int> getWidthOptions() {
     List<int> opts = [];
-    for (int i = 128; i <= 512; i += 64) {
+    // Generate options dynamically or use a fixed list if preferred
+    // Example: Multiples of 64 up to a reasonable limit like 1024
+    for (int i = 128; i <= 1024; i += 64) {
       opts.add(i);
+    }
+    // Ensure the current _inputWidth is an option if available and cropping is off
+    if (!_showCropUI && _inputWidth != null && !opts.contains(_inputWidth!)) {
+      opts.add(_inputWidth!);
+      opts.sort();
     }
     return opts;
   }
 
   List<int> getHeightOptions() {
-    return getWidthOptions();
+    List<int> opts = [];
+    // Example: Multiples of 64 up to a reasonable limit like 1024
+    for (int i = 128; i <= 1024; i += 64) {
+      opts.add(i);
+    }
+    // Ensure the current _inputHeight is an option if available and cropping is off
+    if (!_showCropUI && _inputHeight != null && !opts.contains(_inputHeight!)) {
+      opts.add(_inputHeight!);
+      opts.sort();
+    }
+    return opts;
   }
 
   @override
@@ -563,11 +594,261 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         _rgbBytes = rgbBytes;
         _inputWidth = decodedImage.width;
         _inputHeight = decodedImage.height;
-        width = _inputWidth!;
-        height = _inputHeight!;
+        // width = _inputWidth!; // Don't set width/height directly here anymore
+        // height = _inputHeight!; // Use cropping logic below
+
+        // --- Initialize Cropping State ---
+        _maxCropWidth = largestMultipleOf64(_inputWidth!);
+        _maxCropHeight = largestMultipleOf64(_inputHeight!);
+
+        // Reset width/height sliders to default/initial aspect ratio
+        double initialAspectRatio = _inputWidth! / _inputHeight!;
+        int initialCropW, initialCropH;
+        if (initialAspectRatio >= 1) {
+          // Wider or square
+          initialCropW = math.min(512, _maxCropWidth);
+          initialCropH =
+              largestMultipleOf64((initialCropW / initialAspectRatio).round());
+          initialCropH = math.min(initialCropH, _maxCropHeight);
+          initialCropW =
+              largestMultipleOf64((initialCropH * initialAspectRatio).round());
+          initialCropW = math.min(initialCropW, _maxCropWidth);
+        } else {
+          // Taller
+          initialCropH = math.min(512, _maxCropHeight);
+          initialCropW =
+              largestMultipleOf64((initialCropH * initialAspectRatio).round());
+          initialCropW = math.min(initialCropW, _maxCropWidth);
+          initialCropH =
+              largestMultipleOf64((initialCropW / initialAspectRatio).round());
+          initialCropH = math.min(initialCropH, _maxCropHeight);
+        }
+        // Ensure minimum size
+        width = math.max(64, initialCropW); // Use 'width' state for slider
+        height = math.max(64, initialCropH); // Use 'height' state for slider
+
+        _showCropUI = true; // Show the cropping UI now
+        _cropRect = Rect.zero; // Reset crop rect position
+        _imageDisplaySize = Size.zero; // Reset display size
+
+        // Calculate initial crop rect after the frame renders
+        WidgetsBinding.instance.addPostFrameCallback(_calculateInitialCropRect);
+        // --- End Initialize Cropping State ---
+      });
+    } else {
+      // If user cancels image picking, hide crop UI
+      setState(() {
+        _showCropUI = false;
       });
     }
   }
+
+  // --- Cropping Logic (copied from inpainting_page.dart) ---
+
+  void _calculateInitialCropRect(_) {
+    if (!mounted) return;
+    final RenderBox? imageBox =
+        _imageKey.currentContext?.findRenderObject() as RenderBox?;
+    if (imageBox != null && imageBox.hasSize) {
+      setState(() {
+        _imageDisplaySize = imageBox.size;
+        _updateCropRect(center: true); // Center the initial crop rect
+      });
+    } else {
+      // Retry if the size wasn't available yet
+      WidgetsBinding.instance.addPostFrameCallback(_calculateInitialCropRect);
+    }
+  }
+
+  // Updates the _cropRect based on current dimensions and optionally centers it
+  void _updateCropRect({bool center = false}) {
+    if (_imageDisplaySize == Size.zero) return; // Not ready yet
+
+    // Use the current 'width' and 'height' state variables for crop dimensions
+    double currentCropWidth = width.toDouble();
+    double currentCropHeight = height.toDouble();
+
+    double displayAspect = _imageDisplaySize.width / _imageDisplaySize.height;
+    double cropAspect = currentCropWidth / currentCropHeight;
+
+    double rectWidth, rectHeight;
+
+    // Calculate the dimensions of the crop rectangle within the image display bounds
+    if (displayAspect > cropAspect) {
+      // Image display is wider than crop aspect ratio
+      rectHeight = _imageDisplaySize.height;
+      rectWidth = rectHeight * cropAspect;
+    } else {
+      // Image display is taller or same aspect ratio
+      rectWidth = _imageDisplaySize.width;
+      rectHeight = rectWidth / cropAspect;
+    }
+
+    double left, top;
+
+    if (center || _cropRect == Rect.zero) {
+      // Center if first time or explicitly requested
+      left = (_imageDisplaySize.width - rectWidth) / 2;
+      top = (_imageDisplaySize.height - rectHeight) / 2;
+    } else {
+      // Keep the current center if possible, otherwise clamp to bounds
+      double currentCenterX = _cropRect.left + _cropRect.width / 2;
+      double currentCenterY = _cropRect.top + _cropRect.height / 2;
+
+      left = currentCenterX - rectWidth / 2;
+      top = currentCenterY - rectHeight / 2;
+    }
+
+    // Clamp the rectangle to the image bounds
+    left = left.clamp(0.0, _imageDisplaySize.width - rectWidth);
+    top = top.clamp(0.0, _imageDisplaySize.height - rectHeight);
+
+    // Only update state if the rect actually changes to avoid infinite loops
+    Rect newRect = Rect.fromLTWH(left, top, rectWidth, rectHeight);
+    if (newRect != _cropRect) {
+      setState(() {
+        _cropRect = newRect;
+      });
+    }
+  }
+
+  void _onPanStart(DragStartDetails details) {
+    if (_cropRect.contains(details.localPosition)) {
+      _dragStartOffset = details.localPosition;
+      _dragStartCropRect = _cropRect;
+    } else {
+      _dragStartOffset = Offset.zero; // Indicate drag didn't start inside
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_dragStartOffset == Offset.zero) return; // Drag didn't start inside
+
+    final Offset delta = details.localPosition - _dragStartOffset;
+    double newLeft = _dragStartCropRect.left + delta.dx;
+    double newTop = _dragStartCropRect.top + delta.dy;
+
+    // Clamp movement within the image bounds
+    newLeft = newLeft.clamp(0.0, _imageDisplaySize.width - _cropRect.width);
+    newTop = newTop.clamp(0.0, _imageDisplaySize.height - _cropRect.height);
+
+    setState(() {
+      _cropRect =
+          Rect.fromLTWH(newLeft, newTop, _cropRect.width, _cropRect.height);
+    });
+  }
+
+  // Performs the actual cropping based on current state
+  // Returns null if cropping is not active or fails
+  Future<CroppedImageData?> _getCroppedImageData() async {
+    // Only crop if the UI is shown and we have an input image
+    if (!_showCropUI ||
+        _inputImage == null ||
+        _inputWidth == null ||
+        _inputHeight == null) {
+      return null;
+    }
+    // Ensure display size is calculated
+    if (_imageDisplaySize == Size.zero) {
+      print("Warning: Image display size not calculated yet. Cannot crop.");
+      // Attempt to calculate it now, might delay generation slightly
+      final RenderBox? imageBox =
+          _imageKey.currentContext?.findRenderObject() as RenderBox?;
+      if (imageBox != null && imageBox.hasSize) {
+        _imageDisplaySize = imageBox.size;
+      } else {
+        _showTemporaryError('Cannot determine image size for cropping.');
+        return null; // Still can't get size
+      }
+    }
+    // Ensure crop rect is valid
+    if (_cropRect == Rect.zero ||
+        _cropRect.width <= 0 ||
+        _cropRect.height <= 0) {
+      print("Warning: Invalid crop rectangle: $_cropRect");
+      _showTemporaryError('Invalid crop area selected.');
+      return null;
+    }
+
+    // 1. Read original image bytes
+    final Uint8List imageBytes = await _inputImage!.readAsBytes();
+    final img.Image? originalImage = img.decodeImage(imageBytes);
+
+    if (originalImage == null) {
+      print("Error: Could not decode image for cropping.");
+      _showTemporaryError('Error decoding image for cropping');
+      return null;
+    }
+
+    // 2. Calculate the source crop rectangle in original image coordinates
+    final double scaleX = originalImage.width / _imageDisplaySize.width;
+    final double scaleY = originalImage.height / _imageDisplaySize.height;
+
+    final int srcX =
+        (_cropRect.left * scaleX).round().clamp(0, originalImage.width);
+    final int srcY =
+        (_cropRect.top * scaleY).round().clamp(0, originalImage.height);
+    // Clamp width/height to ensure they don't exceed bounds from srcX/srcY
+    final int srcWidth = (_cropRect.width * scaleX)
+        .round()
+        .clamp(1, originalImage.width - srcX); // Ensure at least 1 pixel
+    final int srcHeight = (_cropRect.height * scaleY)
+        .round()
+        .clamp(1, originalImage.height - srcY); // Ensure at least 1 pixel
+
+    // Double check dimensions after clamping
+    if (srcWidth <= 0 || srcHeight <= 0) {
+      print(
+          "Error: Calculated crop dimensions are invalid after clamping ($srcWidth x $srcHeight).");
+      _showTemporaryError('Invalid crop area calculation.');
+      return null;
+    }
+
+    // 3. Crop the image using img.copyCrop
+    final img.Image croppedImage = img.copyCrop(
+      originalImage,
+      x: srcX,
+      y: srcY,
+      width: srcWidth,
+      height: srcHeight,
+    );
+
+    // 4. Resize the cropped image to the target 'width' and 'height' (from sliders)
+    final img.Image resizedImage = img.copyResize(
+      croppedImage,
+      width: width, // Use state variable 'width'
+      height: height, // Use state variable 'height'
+      interpolation: img.Interpolation.nearest,
+    );
+
+    // 5. Encode the resized image back to Uint8List (RGB format)
+    final Uint8List finalImageBytes = Uint8List(width * height * 3);
+    int rgbIndex = 0;
+    try {
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          final pixel = resizedImage.getPixel(x, y);
+          finalImageBytes[rgbIndex++] = pixel.r.toInt();
+          finalImageBytes[rgbIndex++] = pixel.g.toInt();
+          finalImageBytes[rgbIndex++] = pixel.b.toInt();
+        }
+      }
+    } catch (e) {
+      print("Error converting resized image to RGB bytes: $e");
+      _showTemporaryError('Error processing final image.');
+      return null;
+    }
+
+    // 6. Return the data (maskBytes is null for img2img)
+    return CroppedImageData(
+      imageBytes: finalImageBytes, // Return raw RGB bytes
+      maskBytes: null, // No mask in img2img cropping
+      width: width, // Final width from slider
+      height: height, // Final height from slider
+    );
+  }
+
+  // --- End Cropping Logic ---
 
   @override
   Widget build(BuildContext context) {
@@ -961,34 +1242,153 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 color: theme.colorScheme.primary.withOpacity(0.5),
                 strokeWidth: 2,
                 dashPattern: const [8, 4],
-                child: Container(
-                  height: 300,
-                  child: Center(
+                child: AspectRatio(
+                  // Maintain aspect ratio of the original image
+                  aspectRatio: (_inputWidth != null &&
+                          _inputHeight != null &&
+                          _inputHeight! > 0)
+                      ? _inputWidth! / _inputHeight!
+                      : 1.0, // Default aspect ratio if no image
+                  child: Container(
+                    // Removed color: Colors.grey[300]
                     child: _inputImage == null
-                        ? Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.add_photo_alternate,
-                                size: 64,
-                                color:
-                                    theme.colorScheme.primary.withOpacity(0.5),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Load image',
-                                style: TextStyle(
-                                    color: theme.colorScheme.primary
-                                        .withOpacity(0.5),
-                                    fontSize: 16),
-                              ),
-                            ],
+                        ? Center(
+                            // Center the placeholder
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.add_photo_alternate,
+                                  size: 64,
+                                  color: theme.colorScheme.primary
+                                      .withOpacity(0.5),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Load image',
+                                  style: TextStyle(
+                                      color: theme.colorScheme.primary
+                                          .withOpacity(0.5),
+                                      fontSize: 16),
+                                ),
+                              ],
+                            ),
                           )
-                        : Image.file(_inputImage!, fit: BoxFit.contain),
+                        : LayoutBuilder(
+                            // Use LayoutBuilder for display size
+                            builder: (context, constraints) {
+                              // Update display size post-frame
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted &&
+                                    _imageDisplaySize != constraints.biggest) {
+                                  // Use setState only if size actually changed
+                                  if (_imageDisplaySize !=
+                                      constraints.biggest) {
+                                    setState(() {
+                                      _imageDisplaySize = constraints.biggest;
+                                      _updateCropRect(); // Recalculate rect
+                                    });
+                                  }
+                                }
+                              });
+
+                              return GestureDetector(
+                                onPanStart: _showCropUI ? _onPanStart : null,
+                                onPanUpdate: _showCropUI ? _onPanUpdate : null,
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    // Image
+                                    Image.file(
+                                      _inputImage!,
+                                      key: _imageKey, // Assign key here
+                                      fit: BoxFit.contain,
+                                    ),
+                                    // Cropping Frame Overlay (only if cropping)
+                                    if (_showCropUI && _cropRect != Rect.zero)
+                                      Positioned.fromRect(
+                                        rect: _cropRect,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            border: Border.all(
+                                              color:
+                                                  Colors.white.withOpacity(0.8),
+                                              width: 2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    // Dimming outside the crop area (only if cropping)
+                                    if (_showCropUI && _cropRect != Rect.zero)
+                                      ClipPath(
+                                        clipper: InvertedRectClipper(
+                                            clipRect: _cropRect),
+                                        child: Container(
+                                          color: Colors.black.withOpacity(0.5),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
                   ),
                 ),
               ),
             ),
+            // --- Sliders for Cropping ---
+            if (_showCropUI) ...[
+              const SizedBox(height: 16),
+              Text('Crop Width: $width px'),
+              ShadSlider(
+                min: 64,
+                max: _maxCropWidth.toDouble(),
+                divisions: (_maxCropWidth > 64)
+                    ? (_maxCropWidth - 64) ~/ 64
+                    : 1, // Avoid division by zero
+                initialValue: width.toDouble(),
+                onChanged: (value) {
+                  int newWidth = largestMultipleOf64(value.round());
+                  if (newWidth != width) {
+                    setState(() {
+                      width = newWidth;
+                      double aspect = width / height.toDouble();
+                      height = largestMultipleOf64((width / aspect).round());
+                      height = height.clamp(64, _maxCropHeight);
+                      width = largestMultipleOf64((height * aspect).round());
+                      width = width.clamp(64, _maxCropWidth);
+                      _updateCropRect();
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 10),
+              Text('Crop Height: $height px'),
+              ShadSlider(
+                min: 64,
+                max: _maxCropHeight.toDouble(),
+                divisions: (_maxCropHeight > 64)
+                    ? (_maxCropHeight - 64) ~/ 64
+                    : 1, // Avoid division by zero
+                initialValue: height.toDouble(),
+                onChanged: (value) {
+                  int newHeight = largestMultipleOf64(value.round());
+                  if (newHeight != height) {
+                    setState(() {
+                      height = newHeight;
+                      double aspect = width.toDouble() / height;
+                      width = largestMultipleOf64((height * aspect).round());
+                      width = width.clamp(64, _maxCropWidth);
+                      height = largestMultipleOf64((width / aspect).round());
+                      height = height.clamp(64, _maxCropHeight);
+                      _updateCropRect();
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 16), // Spacing after sliders
+            ],
+            // --- End Sliders ---
             const SizedBox(height: 16),
             ShadInput(
               key: _promptFieldKey,
@@ -2394,16 +2794,26 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getWidthOptions()
-                        .map((w) =>
-                            ShadOption(value: w, child: Text(w.toString())))
-                        .toList(),
+                    enabled: !_showCropUI, // Disable dropdown when cropping
+                    placeholder: Text(
+                      // Display effective width
+                      (_showCropUI ? width : (_inputWidth ?? 512))
+                          .toString(), // Default to 512 if no input
+                    ),
+                    options: _showCropUI
+                        ? const []
+                        : getWidthOptions() // No options needed when disabled
+                            .map((w) =>
+                                ShadOption(value: w, child: Text(w.toString())))
+                            .toList(),
                     selectedOptionBuilder: (context, value) =>
                         Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => width = value);
-                    },
+                    onChanged: _showCropUI
+                        ? null
+                        : (int? value) {
+                            // Remove onChanged when cropping
+                            if (value != null) setState(() => width = value);
+                          },
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -2411,16 +2821,29 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getHeightOptions()
-                        .map((h) =>
-                            ShadOption(value: h, child: Text(h.toString())))
-                        .toList(),
+                    enabled: !_showCropUI, // Disable dropdown when cropping
+                    placeholder: Text(
+                      // Display effective height
+                      (_showCropUI
+                              ? height
+                              : (_inputHeight ??
+                                  512)) // Default to 512 if no input
+                          .toString(),
+                    ),
+                    options: _showCropUI
+                        ? const []
+                        : getHeightOptions() // No options needed when disabled
+                            .map((h) =>
+                                ShadOption(value: h, child: Text(h.toString())))
+                            .toList(),
                     selectedOptionBuilder: (context, value) =>
                         Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => height = value);
-                    },
+                    onChanged: _showCropUI
+                        ? null
+                        : (int? value) {
+                            // Remove onChanged when cropping
+                            if (value != null) setState(() => height = value);
+                          },
                   ),
                 ),
               ],
@@ -2437,7 +2860,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
             const SizedBox(height: 16),
             ShadButton(
               enabled: !(isModelLoading || isGenerating),
-              onPressed: () {
+              onPressed: () async {
+                // Make onPressed async
                 if (_processor == null) {
                   _modelErrorTimer?.cancel();
                   setState(() {
@@ -2465,17 +2889,40 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 setState(() {
                   isGenerating = true;
                   _modelError = '';
-                  status = 'Generating image...';
+                  status = 'Preparing image...'; // Update status
                   progress = 0;
                 });
 
+                // Perform cropping if UI is active
+                CroppedImageData? croppedData;
+                if (_showCropUI) {
+                  croppedData = await _getCroppedImageData();
+                  if (croppedData == null && _showCropUI) {
+                    // Cropping failed or was invalid, stop generation
+                    setState(() {
+                      isGenerating = false;
+                      status = 'Image cropping failed.';
+                    });
+                    return; // Don't proceed if cropping failed but was expected
+                  }
+                }
+
+                // Determine effective image data and dimensions
+                final Uint8List effectiveImageData =
+                    croppedData?.imageBytes ?? _rgbBytes!;
+                final int effectiveWidth = croppedData?.width ?? _inputWidth!;
+                final int effectiveHeight =
+                    croppedData?.height ?? _inputHeight!;
+
                 _processor!.generateImg2Img(
-                  inputImageData: _rgbBytes!,
-                  inputWidth: _inputWidth!,
-                  inputHeight: _inputHeight!,
-                  channel: 3,
-                  outputWidth: width,
-                  outputHeight: height,
+                  inputImageData: effectiveImageData, // Use effective data
+                  inputWidth: effectiveWidth, // Use effective width
+                  inputHeight: effectiveHeight, // Use effective height
+                  channel: 3, // Assuming RGB
+                  outputWidth:
+                      effectiveWidth, // Output should match effective input
+                  outputHeight:
+                      effectiveHeight, // Output should match effective input
                   prompt: prompt,
                   negativePrompt: negativePrompt,
                   clipSkip: clipSkip.toInt(),
