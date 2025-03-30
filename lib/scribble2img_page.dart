@@ -84,6 +84,8 @@ class _ScribblePageState extends State<ScribblePage>
   int? _originalDrawingHeight;
   Uint8List?
       _originalDrawingRgbBytes; // Store original RGB bytes before cropping/resizing
+  List<String> _generationLogs = []; // To store logs for the last generation
+  bool _showLogsButton = false; // To control visibility of the log button
 
   // --- State for Cropping ---
   int _maxCropWidth = 512; // Default, will be updated
@@ -209,12 +211,20 @@ class _ScribblePageState extends State<ScribblePage>
       },
     );
 
+    // Listen for the collected logs after generation
+    _processor!.logListStream.listen((logs) {
+      setState(() {
+        _generationLogs = logs;
+      });
+    });
+
     _processor!.imageStream.listen((image) async {
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
       setState(() {
         isGenerating = false;
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
         status = 'Generation complete';
+        _showLogsButton = true; // Show the log button
       });
 
       await _processor!.saveGeneratedImage(
@@ -233,6 +243,38 @@ class _ScribblePageState extends State<ScribblePage>
         status = 'Generation complete';
       });
     });
+  }
+
+  // Method to show the logs dialog (Copied from main.dart)
+  void _showLogsDialog() {
+    showShadDialog(
+      context: context,
+      builder: (context) => ShadDialog.alert(
+        constraints:
+            const BoxConstraints(maxWidth: 600, maxHeight: 500), // Adjust size
+        title: const Text('Generation Logs'),
+        description: SizedBox(
+          // Constrain the height of the scrollable area
+          height: 300, // Adjust height as needed
+          child: SingleChildScrollView(
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: SelectableText(
+                _generationLogs.join('\n'), // Join logs with newlines
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          ShadButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openDrawingBoard() async {
@@ -2241,110 +2283,126 @@ class _ScribblePageState extends State<ScribblePage>
               initialValue: seed,
             ),
             const SizedBox(height: 16),
-            ShadButton(
-              enabled: !(isModelLoading || isGenerating),
-              onPressed: () async {
-                // Make onPressed async
-                if (_processor == null) {
-                  _modelErrorTimer?.cancel();
-                  setState(() => _modelError = 'Please Load a model first');
-                  _modelErrorTimer = Timer(const Duration(seconds: 10),
-                      () => setState(() => _modelError = ''));
-                  return;
-                }
-                if (!_hasDrawing || _originalDrawingRgbBytes == null) {
-                  // Check for original data too
-                  _showTemporaryError('Please create a drawing first');
-                  return;
-                }
+            Row(
+              // Wrap buttons in a Row
+              children: [
+                ShadButton(
+                  enabled: !(isModelLoading || isGenerating),
+                  onPressed: () async {
+                    // Make onPressed async
+                    if (_processor == null) {
+                      _modelErrorTimer?.cancel();
+                      setState(() => _modelError = 'Please Load a model first');
+                      _modelErrorTimer = Timer(const Duration(seconds: 10),
+                          () => setState(() => _modelError = ''));
+                      return;
+                    }
+                    if (!_hasDrawing || _originalDrawingRgbBytes == null) {
+                      // Check for original data too
+                      _showTemporaryError('Please create a drawing first');
+                      return;
+                    }
 
-                setState(() {
-                  isGenerating = true;
-                  _modelError = '';
-                  status = 'Preparing drawing...'; // Update status
-                  progress = 0;
-                });
-
-                // Perform cropping if UI is active
-                CroppedImageData? croppedData;
-                Uint8List? finalControlBytes;
-                int? finalControlWidth;
-                int? finalControlHeight;
-
-                if (_showCropUI) {
-                  croppedData = await _getCroppedDrawingData();
-                  if (croppedData == null) {
-                    // Cropping failed or was invalid, stop generation
                     setState(() {
-                      isGenerating = false;
-                      status = 'Drawing cropping failed.';
+                      isGenerating = true;
+                      _modelError = '';
+                      status = 'Preparing drawing...'; // Update status
+                      progress = 0;
+                      _generationLogs = []; // Clear previous logs
+                      _showLogsButton = false; // Hide log button
                     });
-                    return; // Don't proceed if cropping failed
-                  }
-                  finalControlBytes = croppedData.imageBytes;
-                  finalControlWidth = croppedData.width;
-                  finalControlHeight = croppedData.height;
-                } else {
-                  // Not cropping, use original (or last used if applicable)
-                  // This case might need refinement depending on desired behavior when cropping is off
-                  finalControlBytes =
-                      _controlImageData; // Use existing control data
-                  finalControlWidth = _controlWidth;
-                  finalControlHeight = _controlHeight;
-                  // Ensure width/height match the control data if not cropping
-                  // width = _controlWidth ?? 512;
-                  // height = _controlHeight ?? 512;
-                }
 
-                // Ensure we have valid dimensions for generation
-                final int effectiveWidth = finalControlWidth ??
-                    width; // Use cropped width or slider width
-                final int effectiveHeight = finalControlHeight ??
-                    height; // Use cropped height or slider height
+                    // Perform cropping if UI is active
+                    CroppedImageData? croppedData;
+                    Uint8List? finalControlBytes;
+                    int? finalControlWidth;
+                    int? finalControlHeight;
 
-                if (finalControlBytes == null ||
-                    finalControlWidth == null ||
-                    finalControlHeight == null) {
-                  _showTemporaryError('Failed to prepare drawing data.');
-                  setState(() => isGenerating = false);
-                  return;
-                }
+                    if (_showCropUI) {
+                      croppedData = await _getCroppedDrawingData();
+                      if (croppedData == null) {
+                        // Cropping failed or was invalid, stop generation
+                        setState(() {
+                          isGenerating = false;
+                          status = 'Drawing cropping failed.';
+                        });
+                        return; // Don't proceed if cropping failed
+                      }
+                      finalControlBytes = croppedData.imageBytes;
+                      finalControlWidth = croppedData.width;
+                      finalControlHeight = croppedData.height;
+                    } else {
+                      // Not cropping, use original (or last used if applicable)
+                      // This case might need refinement depending on desired behavior when cropping is off
+                      finalControlBytes =
+                          _controlImageData; // Use existing control data
+                      finalControlWidth = _controlWidth;
+                      finalControlHeight = _controlHeight;
+                      // Ensure width/height match the control data if not cropping
+                      // width = _controlWidth ?? 512;
+                      // height = _controlHeight ?? 512;
+                    }
 
-                setState(() {
-                  status =
-                      'Generating image...'; // Update status before calling processor
-                  // Update control data state just before generation
-                  _controlImageData = finalControlBytes;
-                  _controlWidth = finalControlWidth;
-                  _controlHeight = finalControlHeight;
-                });
+                    // Ensure we have valid dimensions for generation
+                    final int effectiveWidth = finalControlWidth ??
+                        width; // Use cropped width or slider width
+                    final int effectiveHeight = finalControlHeight ??
+                        height; // Use cropped height or slider height
 
-                _processor!.generateImage(
-                  prompt: prompt,
-                  negativePrompt: negativePrompt,
-                  cfgScale: cfg,
-                  sampleSteps: steps,
-                  width: effectiveWidth, // Use effective width for output
-                  height: effectiveHeight, // Use effective height for output
-                  seed: int.tryParse(seed) ?? -1,
-                  sampleMethod: SampleMethod.values
-                      .firstWhere(
-                        (method) =>
-                            method.displayName.toLowerCase() ==
-                            samplingMethod.toLowerCase(),
-                        orElse: () => SampleMethod.EULER_A,
-                      )
-                      .index,
-                  controlImageData:
-                      finalControlBytes, // Use final processed bytes
-                  controlImageWidth:
-                      finalControlWidth, // Use final processed width
-                  controlImageHeight:
-                      finalControlHeight, // Use final processed height
-                  controlStrength: controlStrength,
-                );
-              },
-              child: const Text('Generate'),
+                    if (finalControlBytes == null ||
+                        finalControlWidth == null ||
+                        finalControlHeight == null) {
+                      _showTemporaryError('Failed to prepare drawing data.');
+                      setState(() => isGenerating = false);
+                      return;
+                    }
+
+                    setState(() {
+                      status =
+                          'Generating image...'; // Update status before calling processor
+                      // Update control data state just before generation
+                      _controlImageData = finalControlBytes;
+                      _controlWidth = finalControlWidth;
+                      _controlHeight = finalControlHeight;
+                    });
+
+                    _processor!.generateImage(
+                      prompt: prompt,
+                      negativePrompt: negativePrompt,
+                      cfgScale: cfg,
+                      sampleSteps: steps,
+                      width: effectiveWidth, // Use effective width for output
+                      height:
+                          effectiveHeight, // Use effective height for output
+                      seed: int.tryParse(seed) ?? -1,
+                      sampleMethod: SampleMethod.values
+                          .firstWhere(
+                            (method) =>
+                                method.displayName.toLowerCase() ==
+                                samplingMethod.toLowerCase(),
+                            orElse: () => SampleMethod.EULER_A,
+                          )
+                          .index,
+                      controlImageData:
+                          finalControlBytes, // Use final processed bytes
+                      controlImageWidth:
+                          finalControlWidth, // Use final processed width
+                      controlImageHeight:
+                          finalControlHeight, // Use final processed height
+                      controlStrength: controlStrength,
+                    );
+                  },
+                  child: const Text('Generate'),
+                ),
+                const SizedBox(width: 8), // Add spacing between buttons
+                if (_showLogsButton &&
+                    _generationLogs
+                        .isNotEmpty) // Conditionally show the log button only if logs exist
+                  ShadButton.outline(
+                    onPressed: _showLogsDialog,
+                    child: const Text('Show Logs'),
+                  ),
+              ],
             ),
             if (_modelError.isNotEmpty)
               Padding(

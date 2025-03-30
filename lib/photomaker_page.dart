@@ -71,6 +71,8 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   String? _photomakerDirPath;
   List<XFile> _selectedImages = [];
   double styleStrength = 50.0;
+  List<String> _generationLogs = []; // To store logs for the last generation
+  bool _showLogsButton = false; // To control visibility of the log button
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -185,6 +187,13 @@ class _PhotomakerPageState extends State<PhotomakerPage>
       },
     );
 
+    // Listen for the collected logs after generation
+    _processor!.logListStream.listen((logs) {
+      setState(() {
+        _generationLogs = logs;
+      });
+    });
+
     _processor!.imageStream.listen((image) async {
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
       setState(() {
@@ -192,6 +201,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
         status = 'Generation complete';
       });
+      _showLogsButton = true; // Show the log button
 
       await _processor!.saveGeneratedImage(
         image,
@@ -209,6 +219,38 @@ class _PhotomakerPageState extends State<PhotomakerPage>
         status = 'Generation complete';
       });
     });
+  }
+
+  // Method to show the logs dialog (Copied from main.dart)
+  void _showLogsDialog() {
+    showShadDialog(
+      context: context,
+      builder: (context) => ShadDialog.alert(
+        constraints:
+            const BoxConstraints(maxWidth: 600, maxHeight: 500), // Adjust size
+        title: const Text('Generation Logs'),
+        description: SizedBox(
+          // Constrain the height of the scrollable area
+          height: 300, // Adjust height as needed
+          child: SingleChildScrollView(
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: SelectableText(
+                _generationLogs.join('\n'), // Join logs with newlines
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          ShadButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickImages() async {
@@ -1560,75 +1602,90 @@ class _PhotomakerPageState extends State<PhotomakerPage>
               initialValue: seed,
             ),
             const SizedBox(height: 16),
-            ShadButton(
-              enabled: !(isModelLoading || isGenerating),
-              onPressed: () async {
-                if (_processor == null) {
-                  _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please Load a model first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
+            Row(
+              // Wrap buttons in a Row
+              children: [
+                ShadButton(
+                  enabled: !(isModelLoading || isGenerating),
+                  onPressed: () async {
+                    if (_processor == null) {
+                      _modelErrorTimer?.cancel();
+                      setState(() {
+                        _modelError = 'Please Load a model first';
+                      });
+                      _modelErrorTimer = Timer(const Duration(seconds: 10), () {
+                        setState(() {
+                          _modelError = '';
+                        });
+                      });
+                      return;
+                    }
+                    if (_selectedImages.isEmpty) {
+                      _modelErrorTimer?.cancel();
+                      setState(() {
+                        _modelError = 'Please select images first';
+                      });
+                      _modelErrorTimer = Timer(const Duration(seconds: 10), () {
+                        setState(() {
+                          _modelError = '';
+                        });
+                      });
+                      return;
+                    }
                     setState(() {
+                      isGenerating = true;
                       _modelError = '';
+                      status = 'Generating image...';
+                      progress = 0;
+                      _generationLogs = []; // Clear previous logs
+                      _showLogsButton = false; // Hide log button
                     });
-                  });
-                  return;
-                }
-                if (_selectedImages.isEmpty) {
-                  _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please select images first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
-                    setState(() {
-                      _modelError = '';
-                    });
-                  });
-                  return;
-                }
-                setState(() {
-                  isGenerating = true;
-                  _modelError = '';
-                  status = 'Generating image...';
-                  progress = 0;
-                });
 
-                final cacheDir = await getTemporaryDirectory();
-                final tempFolder =
-                    Directory('${cacheDir.path}/photomaker_temp');
-                if (await tempFolder.exists()) {
-                  await tempFolder.delete(recursive: true);
-                }
-                await tempFolder.create();
+                    final cacheDir = await getTemporaryDirectory();
+                    final tempFolder =
+                        Directory('${cacheDir.path}/photomaker_temp');
+                    if (await tempFolder.exists()) {
+                      await tempFolder.delete(recursive: true);
+                    }
+                    await tempFolder.create();
 
-                for (var image in _selectedImages) {
-                  final file = File(image.path);
-                  await file.copy('${tempFolder.path}/${image.name}');
-                }
+                    for (var image in _selectedImages) {
+                      final file = File(image.path);
+                      await file.copy('${tempFolder.path}/${image.name}');
+                    }
 
-                _processor!.generateImage(
-                  prompt: prompt,
-                  negativePrompt: negativePrompt,
-                  cfgScale: cfg,
-                  sampleSteps: steps,
-                  width: width,
-                  height: height,
-                  seed: int.tryParse(seed) ?? -1,
-                  sampleMethod: SampleMethod.values
-                      .firstWhere(
-                        (method) =>
-                            method.displayName.toLowerCase() ==
-                            samplingMethod.toLowerCase(),
-                        orElse: () => SampleMethod.EULER_A,
-                      )
-                      .index,
-                  inputIdImagesPath: tempFolder.path,
-                  styleStrength: styleStrength / 100.0,
-                );
-              },
-              child: const Text('Generate'),
-            ),
+                    _processor!.generateImage(
+                      prompt: prompt,
+                      negativePrompt: negativePrompt,
+                      cfgScale: cfg,
+                      sampleSteps: steps,
+                      width: width,
+                      height: height,
+                      seed: int.tryParse(seed) ?? -1,
+                      sampleMethod: SampleMethod.values
+                          .firstWhere(
+                            (method) =>
+                                method.displayName.toLowerCase() ==
+                                samplingMethod.toLowerCase(),
+                            orElse: () => SampleMethod.EULER_A,
+                          )
+                          .index,
+                      inputIdImagesPath: tempFolder.path,
+                      styleStrength: styleStrength / 100.0,
+                    );
+                  },
+                  child: const Text('Generate'),
+                ),
+                const SizedBox(width: 8), // Add spacing between buttons
+                if (_showLogsButton &&
+                    _generationLogs
+                        .isNotEmpty) // Conditionally show the log button only if logs exist
+                  ShadButton.outline(
+                    onPressed: _showLogsDialog,
+                    child: const Text('Show Logs'),
+                  ),
+              ], // Close the Row for buttons
+            ), // Close the Row widget
             if (_modelError.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8.0),
