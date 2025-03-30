@@ -11,6 +11,7 @@ import 'stable_diffusion_service.dart';
 import 'sd_image.dart';
 
 SendPort? _globalSendPort;
+List<String> _collectedLogs = []; // Added to collect logs within the isolate
 
 late final Pointer<NativeFunction<LogCallbackNative>> _logCallbackPtr;
 late final Pointer<NativeFunction<ProgressCallbackNative>> _progressCallbackPtr;
@@ -18,6 +19,11 @@ late final Pointer<NativeFunction<ProgressCallbackNative>> _progressCallbackPtr;
 void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
   final message = text.toDartString();
 
+  // Also add to the collected logs list
+  final logEntry = '[Log L$level] $message';
+  _collectedLogs.add(logEntry);
+
+  // Send immediately for real-time updates (optional, but kept for existing behavior)
   if (message.contains("generating image")) {
     final seedMatch = RegExp(r'seed (\d+)').firstMatch(message);
     if (seedMatch != null) {
@@ -29,19 +35,26 @@ void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
         'seed': extractedSeed
       });
       return;
+      // Don't return here, let it fall through to send the basic log message too if needed
     }
   }
 
   _globalSendPort?.send({
     'type': 'log',
     'level': level,
-    'message': message,
+    'message': message, // Send the original message for compatibility
   });
 }
 
 void _staticProgressCallback(
     int step, int steps, double time, Pointer<Void> data) {
-  print("SD Progress: $step/$steps - ${time}s");
+  final progressEntry =
+      '[Progress] Step $step/$steps (${time.toStringAsFixed(1)}s)';
+  _collectedLogs.add(progressEntry);
+  print(
+      "SD Progress: $step/$steps - ${time.toStringAsFixed(1)}s"); // Restore print statement
+
+  // Send immediately for real-time updates
   _globalSendPort?.send({
     'type': 'progress',
     'step': step,
@@ -79,9 +92,13 @@ class Img2ImgProcessor {
   final ReceivePort _receivePort = ReceivePort();
   final StreamController<ui.Image> _imageController =
       StreamController<ui.Image>.broadcast();
+  final StreamController<List<String>> _logListController =
+      StreamController<List<String>>.broadcast(); // Added for logs
   final _loadingController = StreamController<bool>.broadcast();
 
   Stream<bool> get loadingStream => _loadingController.stream;
+  Stream<List<String>> get logListStream =>
+      _logListController.stream; // Added getter for logs
   Stream<ui.Image> get imageStream => _imageController.stream;
 
   Img2ImgProcessor({
@@ -205,6 +222,12 @@ class Img2ImgProcessor {
             );
             final image = await completer.future;
             _imageController.add(image);
+          } else if (message['type'] == 'logs') {
+            // Handle the collected logs
+            _logListController.add(List<String>.from(message['logs']));
+          } else if (message['type'] == 'error') {
+            print("Error from isolate: ${message['message']}");
+            // Optionally propagate the error further
           }
         }
       });
@@ -329,9 +352,14 @@ class Img2ImgProcessor {
             break;
 
           case 'img2img':
-            if (ctx != null) {
+            _collectedLogs.clear(); // Clear logs before starting generation
+            if (ctx != null && ctx!.address != 0) {
+              // Add null check for address too
               print(
                   "Starting img2img generation with context: ${ctx!.address}");
+              Pointer<SDImage>? controlCondPtr = nullptr; // Declare before try
+              Pointer<Uint8>? controlDataPtr = nullptr; // Also declare here
+
               try {
                 final inputImageData = message['inputImageData'] as Uint8List;
                 final inputWidth = message['inputWidth'] as int;
@@ -356,25 +384,27 @@ class Img2ImgProcessor {
                 final negPromptUtf8 =
                     message['negativePrompt'].toString().toNativeUtf8();
                 final emptyUtf8 = "".toNativeUtf8();
-                Pointer<SDImage>? controlCondPtr;
+                // Pointer<SDImage>? controlCondPtr; // Remove re-declaration
                 if (message['controlImageData'] != null) {
                   final controlImageData =
                       message['controlImageData'] as Uint8List;
                   final controlWidth = message['controlImageWidth'] as int;
                   final controlHeight = message['controlImageHeight'] as int;
-                  final controlDataPtr = malloc<Uint8>(controlImageData.length);
-                  controlDataPtr
-                      .asTypedList(controlImageData.length)
+                  // final controlDataPtr = malloc<Uint8>(controlImageData.length); // Use outer declaration
+                  controlDataPtr = malloc<Uint8>(controlImageData.length);
+                  controlDataPtr!
+                      .asTypedList(controlImageData.length) // Add null check
                       .setAll(0, controlImageData);
 
                   // In the _isolateEntryPoint function, modify the code for Canny processing:
 
+                  // controlCondPtr = malloc<SDImage>(); // Use outer declaration
                   controlCondPtr = malloc<SDImage>();
                   controlCondPtr.ref
                     ..width = controlWidth
                     ..height = controlHeight
                     ..channel = 3
-                    ..data = controlDataPtr;
+                    ..data = controlDataPtr!; // Add null check
                 }
 
                 Pointer<SDImage> maskImage;
@@ -475,15 +505,51 @@ class Img2ImgProcessor {
                   calloc.free(result.cast<Void>());
                 }
               } catch (e) {
-                print("Error generating image: $e");
-                mainSendPort.send({'type': 'error', 'message': e.toString()});
+                print(
+                    "Error generating image in isolate: $e"); // More specific log
+                mainSendPort.send({
+                  'type': 'error',
+                  'message':
+                      "Generation error: ${e.toString()}" // Include error type
+                });
+                // Send logs even if there was an error during generation
+                mainSendPort.send({
+                  'type': 'logs',
+                  'logs': _collectedLogs,
+                });
+              } finally {
+                // Send collected logs regardless of success or failure
+                mainSendPort.send({
+                  'type': 'logs',
+                  'logs': _collectedLogs,
+                });
+
+                // Free C memory for control cond if allocated
+                if (controlCondPtr != null && controlCondPtr != nullptr) {
+                  // Add null check
+                  // Don't free controlCondPtr.ref.data here if it points to controlDataPtr
+                  malloc.free(controlCondPtr); // Free the SDImage struct itself
+                }
+                if (controlDataPtr != null && controlDataPtr != nullptr) {
+                  // Add null check
+                  malloc.free(
+                      controlDataPtr); // Free the image data buffer allocated for control image
+                }
+
+                // Free other native strings if they were allocated
+                // Note: These were already freed earlier in the 'initialize' case,
+                // but ensure correct freeing pattern if paths were passed differently
+                // For img2img, promptUtf8, negPromptUtf8, etc. are freed inside the try block
               }
             } else {
-              print("Context is null, cannot generate image");
-              mainSendPort
-                  .send({'type': 'error', 'message': 'Model not initialized'});
+              // This else corresponds to the 'if (ctx != null)' check
+              print("Context is null in isolate, cannot generate image");
+              mainSendPort.send({
+                'type': 'error',
+                'message': 'Model not initialized in isolate'
+              });
             }
-            break;
+            break; // Break for the 'img2img' case
 
           case 'dispose':
             if (ctx != null && ctx!.address != 0) {
@@ -494,6 +560,8 @@ class Img2ImgProcessor {
               print("No model context to free.");
             }
             mainSendPort.send({'type': 'disposed'});
+            // Close the isolate's receive port to allow the isolate to terminate
+            isolateReceivePort.close();
             break;
         }
       }
@@ -592,5 +660,6 @@ class Img2ImgProcessor {
     });
     _receivePort.close();
     _imageController.close();
+    _logListController.close(); // Close the new controller
   }
 }

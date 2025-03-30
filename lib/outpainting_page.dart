@@ -78,6 +78,8 @@ class _OutpaintingPageState extends State<OutpaintingPage>
   double strength = 0.75; // Default strength for outpainting often higher
   Uint8List? _maskData; // Generated based on padding
   ui.Image? _maskImageUi; // To display the generated mask
+  List<String> _generationLogs = []; // To store logs for the last generation
+  bool _showLogsButton = false; // To control visibility of the log button
 
   // Padding state variables
   int paddingTop = 0;
@@ -385,6 +387,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
         isGenerating = false;
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
         status = 'Generation complete';
+        _showLogsButton = true; // Show the log button
       });
 
       // Use the calculated output dimensions for saving metadata
@@ -402,6 +405,13 @@ class _OutpaintingPageState extends State<OutpaintingPage>
 
       setState(() {
         status = 'Generation complete';
+      });
+    });
+
+    // Listen for the collected logs after generation
+    _processor!.logListStream.listen((logs) {
+      setState(() {
+        _generationLogs = logs;
       });
     });
   }
@@ -2820,222 +2830,246 @@ class _OutpaintingPageState extends State<OutpaintingPage>
             const SizedBox(height: 16),
 
             // --- Generate Button ---
-            ShadButton(
-              enabled: !(isModelLoading || isGenerating),
-              onPressed: () {
-                // --- Pre-generation Checks ---
-                if (_processor == null) {
-                  _modelErrorTimer?.cancel();
-                  setState(() => _modelError = 'Please Load a model first');
-                  _modelErrorTimer = Timer(const Duration(seconds: 10),
-                      () => setState(() => _modelError = ''));
-                  return;
-                }
-                if (_inputImage == null ||
-                    _rgbBytes == null ||
-                    _inputWidth == null ||
-                    _inputHeight == null) {
-                  _modelErrorTimer?.cancel();
-                  setState(
-                      () => _modelError = 'Please select an input image first');
-                  _modelErrorTimer = Timer(const Duration(seconds: 10),
-                      () => setState(() => _modelError = ''));
-                  return;
-                }
-                // Ensure mask is generated and dimensions are calculated
-                _calculateDimensionsAndGenerateMask(); // Recalculate dimensions and mask
-                if (_maskData == null) {
-                  _modelErrorTimer?.cancel();
-                  setState(() =>
-                      _modelError = 'Failed to generate outpainting mask');
-                  _modelErrorTimer = Timer(const Duration(seconds: 10),
-                      () => setState(() => _modelError = ''));
-                  return;
-                }
-                // Use the dimensions calculated by _calculateDimensionsAndGenerateMask
-                final int finalOutputWidth = outputWidth;
-                final int finalOutputHeight = outputHeight;
-
-                if (finalOutputWidth <= 0 || finalOutputHeight <= 0) {
-                  _modelErrorTimer?.cancel();
-                  setState(() =>
-                      _modelError = 'Invalid output dimensions calculated');
-                  _modelErrorTimer = Timer(const Duration(seconds: 10),
-                      () => setState(() => _modelError = ''));
-                  return;
-                }
-
-                // --- Create Padded Input Image Data ---
-                // Create a new buffer for the padded image, filled with grey (127, 127, 127)
-                final int paddedDataSize =
-                    finalOutputWidth * finalOutputHeight * 3;
-                final paddedRgbBytes = Uint8List(paddedDataSize);
-                for (int i = 0; i < paddedDataSize; i++) {
-                  paddedRgbBytes[i] = 127; // Fill with mid-grey
-                }
-
-                // Copy the original image (_rgbBytes) onto the grey padded buffer
-                for (int y = 0; y < _inputHeight!; y++) {
-                  for (int x = 0; x < _inputWidth!; x++) {
-                    // Calculate source index in original _rgbBytes
-                    int srcIndex = (y * _inputWidth! + x) * 3;
-                    // Calculate destination index in paddedRgbBytes (offset by padding)
-                    int dstIndex = ((y + paddingTop) * finalOutputWidth +
-                            (x + paddingLeft)) *
-                        3;
-
-                    // Ensure indices are within bounds (should be, but good practice)
-                    if (srcIndex + 2 < _rgbBytes!.length &&
-                        dstIndex + 2 < paddedRgbBytes.length) {
-                      paddedRgbBytes[dstIndex] = _rgbBytes![srcIndex]; // R
-                      paddedRgbBytes[dstIndex + 1] =
-                          _rgbBytes![srcIndex + 1]; // G
-                      paddedRgbBytes[dstIndex + 2] =
-                          _rgbBytes![srcIndex + 2]; // B
+            Row(
+              // Wrap buttons in a Row
+              children: [
+                ShadButton(
+                  enabled: !(isModelLoading || isGenerating),
+                  onPressed: () {
+                    // --- Pre-generation Checks ---
+                    if (_processor == null) {
+                      _modelErrorTimer?.cancel();
+                      setState(() => _modelError = 'Please Load a model first');
+                      _modelErrorTimer = Timer(const Duration(seconds: 10),
+                          () => setState(() => _modelError = ''));
+                      return;
                     }
-                  }
-                }
-                // --- End of Padded Input Image Creation ---
+                    if (_inputImage == null ||
+                        _rgbBytes == null ||
+                        _inputWidth == null ||
+                        _inputHeight == null) {
+                      _modelErrorTimer?.cancel();
+                      setState(() =>
+                          _modelError = 'Please select an input image first');
+                      _modelErrorTimer = Timer(const Duration(seconds: 10),
+                          () => setState(() => _modelError = ''));
+                      return;
+                    }
+                    // Ensure mask is generated and dimensions are calculated
+                    _calculateDimensionsAndGenerateMask(); // Recalculate dimensions and mask
+                    if (_maskData == null) {
+                      _modelErrorTimer?.cancel();
+                      setState(() =>
+                          _modelError = 'Failed to generate outpainting mask');
+                      _modelErrorTimer = Timer(const Duration(seconds: 10),
+                          () => setState(() => _modelError = ''));
+                      return;
+                    }
+                    // Use the dimensions calculated by _calculateDimensionsAndGenerateMask
+                    final int finalOutputWidth = outputWidth;
+                    final int finalOutputHeight = outputHeight;
 
-                // --- Control Image Processing Logic ---
-                Uint8List? finalControlImageData;
-                int? finalControlWidth;
-                int? finalControlHeight;
+                    if (finalOutputWidth <= 0 || finalOutputHeight <= 0) {
+                      _modelErrorTimer?.cancel();
+                      setState(() =>
+                          _modelError = 'Invalid output dimensions calculated');
+                      _modelErrorTimer = Timer(const Duration(seconds: 10),
+                          () => setState(() => _modelError = ''));
+                      return;
+                    }
 
-                // Determine the source control image data (Canny or original control image)
-                Uint8List? sourceControlBytes;
-                int? sourceControlWidth;
-                int? sourceControlHeight;
+                    // --- Create Padded Input Image Data ---
+                    // Create a new buffer for the padded image, filled with grey (127, 127, 127)
+                    final int paddedDataSize =
+                        finalOutputWidth * finalOutputHeight * 3;
+                    final paddedRgbBytes = Uint8List(paddedDataSize);
+                    for (int i = 0; i < paddedDataSize; i++) {
+                      paddedRgbBytes[i] = 127; // Fill with mid-grey
+                    }
 
-                if (useControlNet && useControlImage) {
-                  if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
-                    // Use Canny result if available and Canny is enabled
-                    sourceControlBytes = _cannyProcessor!.resultRgbBytes!;
-                    sourceControlWidth = _cannyProcessor!.resultWidth!;
-                    sourceControlHeight = _cannyProcessor!.resultHeight!;
-                    // Ensure Canny result is RGB
-                    sourceControlBytes = _ensureRgbFormat(sourceControlBytes,
-                        sourceControlWidth, sourceControlHeight);
-                  } else if (_controlRgbBytes != null) {
-                    // Use original control image if Canny is not used or failed
-                    sourceControlBytes = _controlRgbBytes;
-                    sourceControlWidth = _controlWidth;
-                    sourceControlHeight = _controlHeight;
-                    // Ensure original control image is RGB (already done on load, but double-check)
+                    // Copy the original image (_rgbBytes) onto the grey padded buffer
+                    for (int y = 0; y < _inputHeight!; y++) {
+                      for (int x = 0; x < _inputWidth!; x++) {
+                        // Calculate source index in original _rgbBytes
+                        int srcIndex = (y * _inputWidth! + x) * 3;
+                        // Calculate destination index in paddedRgbBytes (offset by padding)
+                        int dstIndex = ((y + paddingTop) * finalOutputWidth +
+                                (x + paddingLeft)) *
+                            3;
+
+                        // Ensure indices are within bounds (should be, but good practice)
+                        if (srcIndex + 2 < _rgbBytes!.length &&
+                            dstIndex + 2 < paddedRgbBytes.length) {
+                          paddedRgbBytes[dstIndex] = _rgbBytes![srcIndex]; // R
+                          paddedRgbBytes[dstIndex + 1] =
+                              _rgbBytes![srcIndex + 1]; // G
+                          paddedRgbBytes[dstIndex + 2] =
+                              _rgbBytes![srcIndex + 2]; // B
+                        }
+                      }
+                    }
+                    // --- End of Padded Input Image Creation ---
+
+                    // --- Control Image Processing Logic ---
+                    Uint8List? finalControlImageData;
+                    int? finalControlWidth;
+                    int? finalControlHeight;
+
+                    // Determine the source control image data (Canny or original control image)
+                    Uint8List? sourceControlBytes;
+                    int? sourceControlWidth;
+                    int? sourceControlHeight;
+
+                    if (useControlNet && useControlImage) {
+                      if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
+                        // Use Canny result if available and Canny is enabled
+                        sourceControlBytes = _cannyProcessor!.resultRgbBytes!;
+                        sourceControlWidth = _cannyProcessor!.resultWidth!;
+                        sourceControlHeight = _cannyProcessor!.resultHeight!;
+                        // Ensure Canny result is RGB
+                        sourceControlBytes = _ensureRgbFormat(
+                            sourceControlBytes,
+                            sourceControlWidth,
+                            sourceControlHeight);
+                      } else if (_controlRgbBytes != null) {
+                        // Use original control image if Canny is not used or failed
+                        sourceControlBytes = _controlRgbBytes;
+                        sourceControlWidth = _controlWidth;
+                        sourceControlHeight = _controlHeight;
+                        // Ensure original control image is RGB (already done on load, but double-check)
+                        if (sourceControlBytes != null &&
+                            sourceControlWidth != null &&
+                            sourceControlHeight != null) {
+                          sourceControlBytes = _ensureRgbFormat(
+                              sourceControlBytes,
+                              sourceControlWidth,
+                              sourceControlHeight);
+                        }
+                      }
+                    }
+
                     if (sourceControlBytes != null &&
                         sourceControlWidth != null &&
                         sourceControlHeight != null) {
-                      sourceControlBytes = _ensureRgbFormat(sourceControlBytes,
-                          sourceControlWidth, sourceControlHeight);
-                    }
-                  }
-                }
-
-                if (sourceControlBytes != null &&
-                    sourceControlWidth != null &&
-                    sourceControlHeight != null) {
-                  // Check if control image dimensions match the target OUTPUT size
-                  if (sourceControlWidth != finalOutputWidth ||
-                      sourceControlHeight != finalOutputHeight) {
-                    try {
-                      print(
-                          'Control image dimensions ($sourceControlWidth x $sourceControlHeight) differ from target ($finalOutputWidth x $finalOutputHeight). Processing using $_controlImageProcessingMode...');
-                      ProcessedImageData processedData;
-                      if (_controlImageProcessingMode == 'Crop') {
-                        processedData = cropImage(
-                            sourceControlBytes,
-                            sourceControlWidth,
-                            sourceControlHeight,
-                            finalOutputWidth,
-                            finalOutputHeight);
+                      // Check if control image dimensions match the target OUTPUT size
+                      if (sourceControlWidth != finalOutputWidth ||
+                          sourceControlHeight != finalOutputHeight) {
+                        try {
+                          print(
+                              'Control image dimensions ($sourceControlWidth x $sourceControlHeight) differ from target ($finalOutputWidth x $finalOutputHeight). Processing using $_controlImageProcessingMode...');
+                          ProcessedImageData processedData;
+                          if (_controlImageProcessingMode == 'Crop') {
+                            processedData = cropImage(
+                                sourceControlBytes,
+                                sourceControlWidth,
+                                sourceControlHeight,
+                                finalOutputWidth,
+                                finalOutputHeight);
+                          } else {
+                            // Default to Resize
+                            processedData = resizeImage(
+                                sourceControlBytes,
+                                sourceControlWidth,
+                                sourceControlHeight,
+                                finalOutputWidth,
+                                finalOutputHeight);
+                          }
+                          finalControlImageData = processedData.bytes;
+                          finalControlWidth = processedData.width;
+                          finalControlHeight = processedData.height;
+                          print(
+                              'Control image processed to $finalControlWidth x $finalControlHeight.');
+                        } catch (e) {
+                          print("Error processing control image: $e");
+                          // Optionally show an error to the user
+                          _showTemporaryError(
+                              'Error processing control image: $e');
+                          setState(
+                              () => isGenerating = false); // Stop generation
+                          return; // Prevent calling generateImage
+                        }
                       } else {
-                        // Default to Resize
-                        processedData = resizeImage(
-                            sourceControlBytes,
-                            sourceControlWidth,
-                            sourceControlHeight,
-                            finalOutputWidth,
-                            finalOutputHeight);
+                        // Dimensions already match, use the source directly
+                        finalControlImageData = sourceControlBytes;
+                        finalControlWidth = sourceControlWidth;
+                        finalControlHeight = sourceControlHeight;
                       }
-                      finalControlImageData = processedData.bytes;
-                      finalControlWidth = processedData.width;
-                      finalControlHeight = processedData.height;
-                      print(
-                          'Control image processed to $finalControlWidth x $finalControlHeight.');
-                    } catch (e) {
-                      print("Error processing control image: $e");
-                      // Optionally show an error to the user
-                      _showTemporaryError('Error processing control image: $e');
-                      setState(() => isGenerating = false); // Stop generation
-                      return; // Prevent calling generateImage
+                    } else {
+                      // No valid source control image, ensure control params are null
+                      finalControlImageData = null;
+                      finalControlWidth = null;
+                      finalControlHeight = null;
                     }
-                  } else {
-                    // Dimensions already match, use the source directly
-                    finalControlImageData = sourceControlBytes;
-                    finalControlWidth = sourceControlWidth;
-                    finalControlHeight = sourceControlHeight;
-                  }
-                } else {
-                  // No valid source control image, ensure control params are null
-                  finalControlImageData = null;
-                  finalControlWidth = null;
-                  finalControlHeight = null;
-                }
-                // --- End Control Image Processing Logic ---
+                    // --- End Control Image Processing Logic ---
 
-                // --- Start Generation ---
-                setState(() {
-                  isGenerating = true;
-                  _modelError = '';
-                  status = 'Generating image...';
-                  progress = 0;
-                  _generatedImage = null; // Clear previous image
-                });
+                    // --- Start Generation ---
+                    setState(() {
+                      isGenerating = true;
+                      _modelError = '';
+                      status = 'Generating image...';
+                      progress = 0;
+                      _generatedImage = null; // Clear previous image
+                      _generationLogs = []; // Clear previous logs
+                      _showLogsButton =
+                          false; // Hide log button until generation finishes
+                    });
 
-                _processor!.generateImg2Img(
-                  // Input Image (NOW THE PADDED VERSION)
-                  inputImageData: paddedRgbBytes, // Send the grey-padded buffer
-                  inputWidth:
-                      finalOutputWidth, // Width is the final output width
-                  inputHeight:
-                      finalOutputHeight, // Height is the final output height
-                  channel: 3, // Input is RGB
+                    _processor!.generateImg2Img(
+                      // Input Image (NOW THE PADDED VERSION)
+                      inputImageData:
+                          paddedRgbBytes, // Send the grey-padded buffer
+                      inputWidth:
+                          finalOutputWidth, // Width is the final output width
+                      inputHeight:
+                          finalOutputHeight, // Height is the final output height
+                      channel: 3, // Input is RGB
 
-                  // Output Dimensions (should match padded input and mask)
-                  outputWidth: finalOutputWidth,
-                  outputHeight: finalOutputHeight,
+                      // Output Dimensions (should match padded input and mask)
+                      outputWidth: finalOutputWidth,
+                      outputHeight: finalOutputHeight,
 
-                  // Mask (Generated based on padding, dimensions match output)
-                  maskImageData: _maskData!,
-                  maskWidth: finalOutputWidth, // Mask dimensions match output
-                  maskHeight: finalOutputHeight,
+                      // Mask (Generated based on padding, dimensions match output)
+                      maskImageData: _maskData!,
+                      maskWidth:
+                          finalOutputWidth, // Mask dimensions match output
+                      maskHeight: finalOutputHeight,
 
-                  // Other Parameters
-                  prompt: prompt,
-                  negativePrompt: negativePrompt,
-                  clipSkip: clipSkip.toInt(),
-                  cfgScale: cfg,
-                  sampleSteps: steps,
-                  sampleMethod: SampleMethod.values
-                      .firstWhere(
-                        (method) =>
-                            method.displayName.toLowerCase() ==
-                            samplingMethod.toLowerCase(),
-                        orElse: () => SampleMethod.EULER_A,
-                      )
-                      .index,
-                  strength: strength, // Denoising strength
-                  seed: int.tryParse(seed) ?? -1,
-                  batchCount: 1,
+                      // Other Parameters
+                      prompt: prompt,
+                      negativePrompt: negativePrompt,
+                      clipSkip: clipSkip.toInt(),
+                      cfgScale: cfg,
+                      sampleSteps: steps,
+                      sampleMethod: SampleMethod.values
+                          .firstWhere(
+                            (method) =>
+                                method.displayName.toLowerCase() ==
+                                samplingMethod.toLowerCase(),
+                            orElse: () => SampleMethod.EULER_A,
+                          )
+                          .index,
+                      strength: strength, // Denoising strength
+                      seed: int.tryParse(seed) ?? -1,
+                      batchCount: 1,
 
-                  // ControlNet Parameters
-                  controlImageData: finalControlImageData,
-                  controlImageWidth: finalControlWidth,
-                  controlImageHeight: finalControlHeight,
-                  controlStrength: useControlNet ? controlStrength : 0.0,
-                );
-              },
-              child: const Text('Generate'),
+                      // ControlNet Parameters
+                      controlImageData: finalControlImageData,
+                      controlImageWidth: finalControlWidth,
+                      controlImageHeight: finalControlHeight,
+                      controlStrength: useControlNet ? controlStrength : 0.0,
+                    );
+                  },
+                  child: const Text('Generate'),
+                ),
+                const SizedBox(width: 8), // Add spacing between buttons
+                if (_showLogsButton &&
+                    _generationLogs
+                        .isNotEmpty) // Conditionally show the log button only if logs exist
+                  ShadButton.outline(
+                    onPressed: _showLogsDialog,
+                    child: const Text('Show Logs'),
+                  ),
+              ],
             ),
             if (_modelError.isNotEmpty)
               Padding(
@@ -3064,6 +3098,39 @@ class _OutpaintingPageState extends State<OutpaintingPage>
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  // Method to show the logs dialog
+  void _showLogsDialog() {
+    final theme = ShadTheme.of(context); // Get theme for dialog styling
+    showShadDialog(
+      context: context,
+      builder: (context) => ShadDialog.alert(
+        constraints:
+            const BoxConstraints(maxWidth: 600, maxHeight: 500), // Adjust size
+        title: const Text('Generation Logs'),
+        description: SizedBox(
+          // Constrain the height of the scrollable area
+          height: 300, // Adjust height as needed
+          child: SingleChildScrollView(
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: SelectableText(
+                _generationLogs.join('\n'), // Join logs with newlines
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          ShadButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
