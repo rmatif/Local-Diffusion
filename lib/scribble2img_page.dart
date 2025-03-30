@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:math' as math; // Import dart:math
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -16,10 +17,11 @@ import 'photomaker_page.dart';
 import 'stable_diffusion_processor.dart';
 import 'utils.dart';
 import 'main.dart';
-import 'img2img_page.dart';
+import 'img2img_page.dart'; // Keep for reference if needed, but logic is being copied
 import 'upscaler_page.dart';
 import 'package:flutter_drawing_board/flutter_drawing_board.dart';
 import 'package:image/image.dart' as img;
+import 'image_processing_utils.dart'; // Import for CroppedImageData and InvertedRectClipper
 
 class ScribblePage extends StatefulWidget {
   const ScribblePage({super.key});
@@ -76,9 +78,24 @@ class _ScribblePageState extends State<ScribblePage>
   int? _controlHeight;
   double controlStrength = 0.9;
   final DrawingController _drawingController = DrawingController();
-  Uint8List? _drawingImageData;
+  Uint8List? _drawingImageData; // PNG bytes for display
   bool _hasDrawing = false;
+  int? _originalDrawingWidth; // Store original drawing dimensions
+  int? _originalDrawingHeight;
+  Uint8List?
+      _originalDrawingRgbBytes; // Store original RGB bytes before cropping/resizing
 
+  // --- State for Cropping ---
+  int _maxCropWidth = 512; // Default, will be updated
+  int _maxCropHeight = 512; // Default, will be updated
+  // Use 'width' and 'height' state variables for current slider values
+  Rect _cropRect = Rect.zero; // Position relative to the displayed image widget
+  Size _imageDisplaySize = Size.zero; // Size of the image widget as displayed
+  final GlobalKey _imageKey = GlobalKey();
+  Offset _dragStartOffset = Offset.zero;
+  Rect _dragStartCropRect = Rect.zero;
+  bool _showCropUI = false; // Flag to control visibility of crop UI
+  // --- End State for Cropping ---
   final List<String> samplingMethods = const [
     'euler_a',
     'euler',
@@ -259,40 +276,116 @@ class _ScribblePageState extends State<ScribblePage>
                             final imageData =
                                 await _drawingController.getImageData();
                             if (imageData != null) {
-                              final bytes = imageData.buffer.asUint8List();
-                              final originalImage = img.decodeImage(bytes);
+                              final pngBytesForDisplay =
+                                  imageData.buffer.asUint8List();
+                              final originalImage =
+                                  img.decodeImage(pngBytesForDisplay);
+
                               if (originalImage != null) {
-                                final resizedImage = img.copyResize(
-                                  originalImage,
-                                  width: 512,
-                                  height: 512,
-                                  interpolation: img.Interpolation.average,
-                                );
-                                final rgbBytes = Uint8List(512 * 512 * 3);
-                                int index = 0;
-                                for (int y = 0; y < 512; y++) {
-                                  for (int x = 0; x < 512; x++) {
-                                    final pixel = resizedImage.getPixel(x, y);
-                                    rgbBytes[index] = pixel.r.toInt();
-                                    rgbBytes[index + 1] = pixel.g.toInt();
-                                    rgbBytes[index + 2] = pixel.b.toInt();
-                                    index += 3;
+                                // --- Store Original Data ---
+                                _originalDrawingWidth = originalImage.width;
+                                _originalDrawingHeight = originalImage.height;
+
+                                // Convert original to RGB immediately for later cropping
+                                final originalRgbBytes = Uint8List(
+                                    _originalDrawingWidth! *
+                                        _originalDrawingHeight! *
+                                        3);
+                                int rgbIndex = 0;
+                                for (int y = 0;
+                                    y < _originalDrawingHeight!;
+                                    y++) {
+                                  for (int x = 0;
+                                      x < _originalDrawingWidth!;
+                                      x++) {
+                                    final pixel = originalImage.getPixel(x, y);
+                                    originalRgbBytes[rgbIndex++] =
+                                        pixel.r.toInt();
+                                    originalRgbBytes[rgbIndex++] =
+                                        pixel.g.toInt();
+                                    originalRgbBytes[rgbIndex++] =
+                                        pixel.b.toInt();
                                   }
                                 }
-                                final resizedBytes =
-                                    img.encodePng(resizedImage);
+                                _originalDrawingRgbBytes = originalRgbBytes;
+                                // --- End Store Original Data ---
+
+                                // --- Initialize Cropping State ---
+                                _maxCropWidth =
+                                    largestMultipleOf64(_originalDrawingWidth!);
+                                _maxCropHeight = largestMultipleOf64(
+                                    _originalDrawingHeight!);
+
+                                // Reset width/height sliders to default/initial aspect ratio
+                                double initialAspectRatio =
+                                    _originalDrawingWidth! /
+                                        _originalDrawingHeight!;
+                                int initialCropW, initialCropH;
+                                if (initialAspectRatio >= 1) {
+                                  // Wider or square
+                                  initialCropW = math.min(512, _maxCropWidth);
+                                  initialCropH = largestMultipleOf64(
+                                      (initialCropW / initialAspectRatio)
+                                          .round());
+                                  initialCropH =
+                                      math.min(initialCropH, _maxCropHeight);
+                                  initialCropW = largestMultipleOf64(
+                                      (initialCropH * initialAspectRatio)
+                                          .round());
+                                  initialCropW =
+                                      math.min(initialCropW, _maxCropWidth);
+                                } else {
+                                  // Taller
+                                  initialCropH = math.min(512, _maxCropHeight);
+                                  initialCropW = largestMultipleOf64(
+                                      (initialCropH * initialAspectRatio)
+                                          .round());
+                                  initialCropW =
+                                      math.min(initialCropW, _maxCropWidth);
+                                  initialCropH = largestMultipleOf64(
+                                      (initialCropW / initialAspectRatio)
+                                          .round());
+                                  initialCropH =
+                                      math.min(initialCropH, _maxCropHeight);
+                                }
+                                // Ensure minimum size
+                                int newWidth = math.max(64, initialCropW);
+                                int newHeight = math.max(64, initialCropH);
+                                // --- End Initialize Cropping State ---
+
                                 setState(() {
                                   _drawingImageData =
-                                      Uint8List.fromList(resizedBytes);
-                                  _controlImageData = rgbBytes;
-                                  _controlWidth = 512;
-                                  _controlHeight = 512;
+                                      pngBytesForDisplay; // Use original PNG for display
                                   _hasDrawing = true;
+                                  _showCropUI = true; // Enable cropping UI
+
+                                  // Set initial slider values
+                                  width = newWidth;
+                                  height = newHeight;
+
+                                  // Reset crop rect position and display size
+                                  _cropRect = Rect.zero;
+                                  _imageDisplaySize = Size.zero;
+
+                                  // Set initial control data (will be updated by cropping before generation)
+                                  _controlImageData = _originalDrawingRgbBytes;
+                                  _controlWidth = _originalDrawingWidth;
+                                  _controlHeight = _originalDrawingHeight;
                                 });
-                                Navigator.of(context).pop();
+
+                                // Calculate initial crop rect after the frame renders
+                                WidgetsBinding.instance.addPostFrameCallback(
+                                    _calculateInitialCropRect);
+
+                                Navigator.of(context)
+                                    .pop(); // Close the drawing dialog
+                              } else {
+                                Navigator.of(context)
+                                    .pop(); // Close if image decoding failed
                               }
                             } else {
-                              Navigator.of(context).pop();
+                              Navigator.of(context)
+                                  .pop(); // Close if no image data
                             }
                           },
                           child: const Text('Save'),
@@ -602,6 +695,253 @@ class _ScribblePageState extends State<ScribblePage>
     );
   }
 
+  // --- Cropping Logic (adapted from img2img_page.dart) ---
+
+  void _calculateInitialCropRect(_) {
+    if (!mounted) return;
+    final RenderBox? imageBox =
+        _imageKey.currentContext?.findRenderObject() as RenderBox?;
+    if (imageBox != null && imageBox.hasSize) {
+      // Check if size is valid before proceeding
+      if (imageBox.size.width > 0 && imageBox.size.height > 0) {
+        setState(() {
+          _imageDisplaySize = imageBox.size;
+          _updateCropRect(center: true); // Center the initial crop rect
+        });
+      } else {
+        // Retry if the size wasn't valid yet
+        WidgetsBinding.instance.addPostFrameCallback(_calculateInitialCropRect);
+      }
+    } else {
+      // Retry if the size wasn't available yet
+      WidgetsBinding.instance.addPostFrameCallback(_calculateInitialCropRect);
+    }
+  }
+
+  // Updates the _cropRect based on current dimensions and optionally centers it
+  void _updateCropRect({bool center = false}) {
+    if (_imageDisplaySize == Size.zero ||
+        _imageDisplaySize.width <= 0 ||
+        _imageDisplaySize.height <= 0) return; // Not ready yet or invalid size
+    if (width <= 0 || height <= 0) return; // Invalid crop dimensions
+
+    // Use the current 'width' and 'height' state variables for crop dimensions
+    double currentCropWidth = width.toDouble();
+    double currentCropHeight = height.toDouble();
+
+    double displayAspect = _imageDisplaySize.width / _imageDisplaySize.height;
+    double cropAspect = currentCropWidth / currentCropHeight;
+
+    double rectWidth, rectHeight;
+
+    // Calculate the dimensions of the crop rectangle within the image display bounds
+    if (displayAspect > cropAspect) {
+      // Image display is wider than crop aspect ratio
+      rectHeight = _imageDisplaySize.height;
+      rectWidth = rectHeight * cropAspect;
+    } else {
+      // Image display is taller or same aspect ratio
+      rectWidth = _imageDisplaySize.width;
+      rectHeight = rectWidth / cropAspect;
+    }
+
+    // Ensure calculated dimensions are positive
+    rectWidth = math.max(1.0, rectWidth);
+    rectHeight = math.max(1.0, rectHeight);
+
+    double left, top;
+
+    if (center || _cropRect == Rect.zero) {
+      // Center if first time or explicitly requested
+      left = (_imageDisplaySize.width - rectWidth) / 2;
+      top = (_imageDisplaySize.height - rectHeight) / 2;
+    } else {
+      // Keep the current center if possible, otherwise clamp to bounds
+      double currentCenterX = _cropRect.left + _cropRect.width / 2;
+      double currentCenterY = _cropRect.top + _cropRect.height / 2;
+
+      left = currentCenterX - rectWidth / 2;
+      top = currentCenterY - rectHeight / 2;
+    }
+
+    // Clamp the rectangle to the image bounds
+    left = left.clamp(0.0, _imageDisplaySize.width - rectWidth);
+    top = top.clamp(0.0, _imageDisplaySize.height - rectHeight);
+
+    // Ensure left/top are not NaN
+    left = left.isNaN ? 0.0 : left;
+    top = top.isNaN ? 0.0 : top;
+
+    // Only update state if the rect actually changes to avoid infinite loops
+    Rect newRect = Rect.fromLTWH(left, top, rectWidth, rectHeight);
+    if (newRect != _cropRect) {
+      setState(() {
+        _cropRect = newRect;
+      });
+    }
+  }
+
+  void _onPanStart(DragStartDetails details) {
+    if (_cropRect.contains(details.localPosition)) {
+      _dragStartOffset = details.localPosition;
+      _dragStartCropRect = _cropRect;
+    } else {
+      _dragStartOffset = Offset.zero; // Indicate drag didn't start inside
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_dragStartOffset == Offset.zero) return; // Drag didn't start inside
+
+    final Offset delta = details.localPosition - _dragStartOffset;
+    double newLeft = _dragStartCropRect.left + delta.dx;
+    double newTop = _dragStartCropRect.top + delta.dy;
+
+    // Clamp movement within the image bounds
+    newLeft = newLeft.clamp(0.0, _imageDisplaySize.width - _cropRect.width);
+    newTop = newTop.clamp(0.0, _imageDisplaySize.height - _cropRect.height);
+
+    // Ensure left/top are not NaN
+    newLeft = newLeft.isNaN ? 0.0 : newLeft;
+    newTop = newTop.isNaN ? 0.0 : newTop;
+
+    setState(() {
+      _cropRect =
+          Rect.fromLTWH(newLeft, newTop, _cropRect.width, _cropRect.height);
+    });
+  }
+
+  // Performs the actual cropping based on current state
+  // Returns null if cropping is not active or fails
+  Future<CroppedImageData?> _getCroppedDrawingData() async {
+    // Only crop if the UI is shown and we have original drawing data
+    if (!_showCropUI ||
+        _originalDrawingRgbBytes == null ||
+        _originalDrawingWidth == null ||
+        _originalDrawingHeight == null) {
+      return null;
+    }
+    // Ensure display size is calculated and valid
+    if (_imageDisplaySize == Size.zero ||
+        _imageDisplaySize.width <= 0 ||
+        _imageDisplaySize.height <= 0) {
+      print(
+          "Warning: Image display size not calculated or invalid. Cannot crop.");
+      // Attempt to calculate it now, might delay generation slightly
+      final RenderBox? imageBox =
+          _imageKey.currentContext?.findRenderObject() as RenderBox?;
+      if (imageBox != null &&
+          imageBox.hasSize &&
+          imageBox.size.width > 0 &&
+          imageBox.size.height > 0) {
+        _imageDisplaySize = imageBox.size;
+        _updateCropRect(); // Try updating rect again
+      } else {
+        _showTemporaryError('Cannot determine image size for cropping.');
+        return null; // Still can't get size
+      }
+    }
+    // Ensure crop rect is valid
+    if (_cropRect == Rect.zero ||
+        _cropRect.width <= 0 ||
+        _cropRect.height <= 0) {
+      print("Warning: Invalid crop rectangle: $_cropRect");
+      // Attempt to recalculate if it seems invalid
+      _updateCropRect(center: true);
+      if (_cropRect == Rect.zero ||
+          _cropRect.width <= 0 ||
+          _cropRect.height <= 0) {
+        _showTemporaryError('Invalid crop area selected.');
+        return null;
+      }
+    }
+
+    // 1. Use the stored original RGB bytes
+    final Uint8List originalBytes = _originalDrawingRgbBytes!;
+    final int originalWidth = _originalDrawingWidth!;
+    final int originalHeight = _originalDrawingHeight!;
+
+    // Create an img.Image from raw RGB bytes
+    final img.Image? originalImage = img.Image.fromBytes(
+        width: originalWidth,
+        height: originalHeight,
+        bytes: originalBytes.buffer,
+        numChannels: 3); // Assuming 3 channels (RGB)
+
+    if (originalImage == null) {
+      print("Error: Could not create image from RGB bytes for cropping.");
+      _showTemporaryError('Error processing drawing for cropping');
+      return null;
+    }
+
+    // 2. Calculate the source crop rectangle in original image coordinates
+    final double scaleX = originalWidth / _imageDisplaySize.width;
+    final double scaleY = originalHeight / _imageDisplaySize.height;
+
+    final int srcX = (_cropRect.left * scaleX).round().clamp(0, originalWidth);
+    final int srcY = (_cropRect.top * scaleY).round().clamp(0, originalHeight);
+    // Clamp width/height to ensure they don't exceed bounds from srcX/srcY
+    final int srcWidth = (_cropRect.width * scaleX)
+        .round()
+        .clamp(1, originalWidth - srcX); // Ensure at least 1 pixel
+    final int srcHeight = (_cropRect.height * scaleY)
+        .round()
+        .clamp(1, originalHeight - srcY); // Ensure at least 1 pixel
+
+    // Double check dimensions after clamping
+    if (srcWidth <= 0 || srcHeight <= 0) {
+      print(
+          "Error: Calculated crop dimensions are invalid after clamping ($srcWidth x $srcHeight). CropRect: $_cropRect, DisplaySize: $_imageDisplaySize, Scale: $scaleX, $scaleY");
+      _showTemporaryError('Invalid crop area calculation.');
+      return null;
+    }
+
+    // 3. Crop the image using img.copyCrop
+    final img.Image croppedImage = img.copyCrop(
+      originalImage,
+      x: srcX,
+      y: srcY,
+      width: srcWidth,
+      height: srcHeight,
+    );
+
+    // 4. Resize the cropped image to the target 'width' and 'height' (from sliders)
+    final img.Image resizedImage = img.copyResize(
+      croppedImage,
+      width: width, // Use state variable 'width'
+      height: height, // Use state variable 'height'
+      interpolation: img
+          .Interpolation.average, // Use average for potentially better quality
+    );
+
+    // 5. Encode the resized image back to Uint8List (RGB format)
+    final Uint8List finalImageBytes = Uint8List(width * height * 3);
+    int rgbIndex = 0;
+    try {
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          final pixel = resizedImage.getPixel(x, y);
+          finalImageBytes[rgbIndex++] = pixel.r.toInt();
+          finalImageBytes[rgbIndex++] = pixel.g.toInt();
+          finalImageBytes[rgbIndex++] = pixel.b.toInt();
+        }
+      }
+    } catch (e) {
+      print("Error converting resized image to RGB bytes: $e");
+      _showTemporaryError('Error processing final image.');
+      return null;
+    }
+
+    // 6. Return the data
+    return CroppedImageData(
+      imageBytes: finalImageBytes, // Return raw RGB bytes
+      maskBytes: null, // No mask in scribble cropping
+      width: width, // Final width from slider
+      height: height, // Final height from slider
+    );
+  }
+
+  // --- End Cropping Logic ---
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
@@ -1170,36 +1510,161 @@ class _ScribblePageState extends State<ScribblePage>
                 color: theme.colorScheme.primary.withOpacity(0.5),
                 strokeWidth: 2,
                 dashPattern: const [8, 4],
-                child: Container(
-                  height: 200,
-                  width: double.infinity,
-                  child: _hasDrawing && _drawingImageData != null
-                      ? Image.memory(_drawingImageData!, fit: BoxFit.contain)
-                      : Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.brush,
-                                size: 64,
-                                color:
-                                    theme.colorScheme.primary.withOpacity(0.5),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Tap to draw',
-                                style: TextStyle(
+                child: AspectRatio(
+                  // Maintain aspect ratio of the original drawing
+                  aspectRatio: (_originalDrawingWidth != null &&
+                          _originalDrawingHeight != null &&
+                          _originalDrawingHeight! > 0)
+                      ? _originalDrawingWidth! / _originalDrawingHeight!
+                      : 1.0, // Default aspect ratio if no drawing
+                  child: Container(
+                    child: !_hasDrawing || _drawingImageData == null
+                        ? Center(
+                            // Placeholder when no drawing
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.brush,
+                                  size: 64,
                                   color: theme.colorScheme.primary
                                       .withOpacity(0.5),
-                                  fontSize: 16,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Tap to draw',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.primary
+                                        .withOpacity(0.5),
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : LayoutBuilder(
+                            // Use LayoutBuilder for display size
+                            builder: (context, constraints) {
+                              // Update display size post-frame if changed
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted &&
+                                    _imageDisplaySize != constraints.biggest) {
+                                  // Check if size is valid before setting state
+                                  if (constraints.biggest.width > 0 &&
+                                      constraints.biggest.height > 0) {
+                                    // Use setState only if size actually changed and is valid
+                                    if (_imageDisplaySize !=
+                                        constraints.biggest) {
+                                      setState(() {
+                                        _imageDisplaySize = constraints.biggest;
+                                        _updateCropRect(); // Recalculate rect
+                                      });
+                                    }
+                                  }
+                                }
+                              });
+
+                              return GestureDetector(
+                                onPanStart: _showCropUI ? _onPanStart : null,
+                                onPanUpdate: _showCropUI ? _onPanUpdate : null,
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    // Drawing Preview
+                                    Image.memory(
+                                      _drawingImageData!,
+                                      key: _imageKey, // Assign key here
+                                      fit: BoxFit.contain,
+                                      gaplessPlayback: true, // Smoother updates
+                                    ),
+                                    // Cropping Frame Overlay (only if cropping)
+                                    if (_showCropUI && _cropRect != Rect.zero)
+                                      Positioned.fromRect(
+                                        rect: _cropRect,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            border: Border.all(
+                                              color:
+                                                  Colors.white.withOpacity(0.8),
+                                              width: 2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    // Dimming outside the crop area (only if cropping)
+                                    if (_showCropUI && _cropRect != Rect.zero)
+                                      ClipPath(
+                                        clipper: InvertedRectClipper(
+                                            clipRect: _cropRect),
+                                        child: Container(
+                                          color: Colors.black.withOpacity(0.5),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
                           ),
-                        ),
+                  ),
                 ),
               ),
             ),
+            // --- Sliders for Cropping ---
+            if (_showCropUI) ...[
+              const SizedBox(height: 16),
+              Text('Crop Width: $width px'),
+              ShadSlider(
+                min: 64,
+                max: _maxCropWidth.toDouble(),
+                divisions:
+                    (_maxCropWidth > 64) ? (_maxCropWidth - 64) ~/ 64 : 1,
+                initialValue: width.toDouble().clamp(
+                    64.0, _maxCropWidth.toDouble()), // Clamp initial value
+                onChanged: (value) {
+                  int newWidth = largestMultipleOf64(value.round());
+                  if (newWidth != width) {
+                    setState(() {
+                      width = newWidth.clamp(64, _maxCropWidth); // Clamp result
+                      // Maintain aspect ratio (optional, could allow free resize)
+                      // double aspect = width / height.toDouble();
+                      // height = largestMultipleOf64((width / aspect).round());
+                      // height = height.clamp(64, _maxCropHeight);
+                      // width = largestMultipleOf64((height * aspect).round());
+                      // width = width.clamp(64, _maxCropWidth);
+                      _updateCropRect();
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 10),
+              Text('Crop Height: $height px'),
+              ShadSlider(
+                min: 64,
+                max: _maxCropHeight.toDouble(),
+                divisions:
+                    (_maxCropHeight > 64) ? (_maxCropHeight - 64) ~/ 64 : 1,
+                initialValue: height.toDouble().clamp(
+                    64.0, _maxCropHeight.toDouble()), // Clamp initial value
+                onChanged: (value) {
+                  int newHeight = largestMultipleOf64(value.round());
+                  if (newHeight != height) {
+                    setState(() {
+                      height =
+                          newHeight.clamp(64, _maxCropHeight); // Clamp result
+                      // Maintain aspect ratio (optional)
+                      // double aspect = width.toDouble() / height;
+                      // width = largestMultipleOf64((height * aspect).round());
+                      // width = width.clamp(64, _maxCropWidth);
+                      // height = largestMultipleOf64((width / aspect).round());
+                      // height = height.clamp(64, _maxCropHeight);
+                      _updateCropRect();
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 16), // Spacing after sliders
+            ],
+            // --- End Sliders ---
             const SizedBox(height: 16),
             ShadInput(
               key: _promptFieldKey,
@@ -1717,16 +2182,25 @@ class _ScribblePageState extends State<ScribblePage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getWidthOptions()
-                        .map((w) =>
-                            ShadOption(value: w, child: Text(w.toString())))
-                        .toList(),
+                    enabled: !_showCropUI, // Disable dropdown when cropping
+                    placeholder: Text(
+                      // Display effective width from slider or default
+                      (_showCropUI ? width : 512).toString(),
+                    ),
+                    options: _showCropUI
+                        ? const []
+                        : getWidthOptions() // No options needed when disabled
+                            .map((w) =>
+                                ShadOption(value: w, child: Text(w.toString())))
+                            .toList(),
                     selectedOptionBuilder: (context, value) =>
                         Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => width = value);
-                    },
+                    onChanged: _showCropUI
+                        ? null
+                        : (int? value) {
+                            // Disable onChanged when cropping
+                            if (value != null) setState(() => width = value);
+                          },
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -1734,16 +2208,25 @@ class _ScribblePageState extends State<ScribblePage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
-                    placeholder: const Text('512'),
-                    options: getHeightOptions()
-                        .map((h) =>
-                            ShadOption(value: h, child: Text(h.toString())))
-                        .toList(),
+                    enabled: !_showCropUI, // Disable dropdown when cropping
+                    placeholder: Text(
+                      // Display effective height from slider or default
+                      (_showCropUI ? height : 512).toString(),
+                    ),
+                    options: _showCropUI
+                        ? const []
+                        : getHeightOptions() // No options needed when disabled
+                            .map((h) =>
+                                ShadOption(value: h, child: Text(h.toString())))
+                            .toList(),
                     selectedOptionBuilder: (context, value) =>
                         Text(value.toString()),
-                    onChanged: (int? value) {
-                      if (value != null) setState(() => height = value);
-                    },
+                    onChanged: _showCropUI
+                        ? null
+                        : (int? value) {
+                            // Disable onChanged when cropping
+                            if (value != null) setState(() => height = value);
+                          },
                   ),
                 ),
               ],
@@ -1760,28 +2243,80 @@ class _ScribblePageState extends State<ScribblePage>
             const SizedBox(height: 16),
             ShadButton(
               enabled: !(isModelLoading || isGenerating),
-              onPressed: () {
+              onPressed: () async {
+                // Make onPressed async
                 if (_processor == null) {
                   _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please Load a model first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
-                    setState(() {
-                      _modelError = '';
-                    });
-                  });
+                  setState(() => _modelError = 'Please Load a model first');
+                  _modelErrorTimer = Timer(const Duration(seconds: 10),
+                      () => setState(() => _modelError = ''));
                   return;
                 }
-                if (!_hasDrawing) {
+                if (!_hasDrawing || _originalDrawingRgbBytes == null) {
+                  // Check for original data too
                   _showTemporaryError('Please create a drawing first');
                   return;
                 }
+
                 setState(() {
                   isGenerating = true;
                   _modelError = '';
-                  status = 'Generating image...';
+                  status = 'Preparing drawing...'; // Update status
                   progress = 0;
+                });
+
+                // Perform cropping if UI is active
+                CroppedImageData? croppedData;
+                Uint8List? finalControlBytes;
+                int? finalControlWidth;
+                int? finalControlHeight;
+
+                if (_showCropUI) {
+                  croppedData = await _getCroppedDrawingData();
+                  if (croppedData == null) {
+                    // Cropping failed or was invalid, stop generation
+                    setState(() {
+                      isGenerating = false;
+                      status = 'Drawing cropping failed.';
+                    });
+                    return; // Don't proceed if cropping failed
+                  }
+                  finalControlBytes = croppedData.imageBytes;
+                  finalControlWidth = croppedData.width;
+                  finalControlHeight = croppedData.height;
+                } else {
+                  // Not cropping, use original (or last used if applicable)
+                  // This case might need refinement depending on desired behavior when cropping is off
+                  finalControlBytes =
+                      _controlImageData; // Use existing control data
+                  finalControlWidth = _controlWidth;
+                  finalControlHeight = _controlHeight;
+                  // Ensure width/height match the control data if not cropping
+                  // width = _controlWidth ?? 512;
+                  // height = _controlHeight ?? 512;
+                }
+
+                // Ensure we have valid dimensions for generation
+                final int effectiveWidth = finalControlWidth ??
+                    width; // Use cropped width or slider width
+                final int effectiveHeight = finalControlHeight ??
+                    height; // Use cropped height or slider height
+
+                if (finalControlBytes == null ||
+                    finalControlWidth == null ||
+                    finalControlHeight == null) {
+                  _showTemporaryError('Failed to prepare drawing data.');
+                  setState(() => isGenerating = false);
+                  return;
+                }
+
+                setState(() {
+                  status =
+                      'Generating image...'; // Update status before calling processor
+                  // Update control data state just before generation
+                  _controlImageData = finalControlBytes;
+                  _controlWidth = finalControlWidth;
+                  _controlHeight = finalControlHeight;
                 });
 
                 _processor!.generateImage(
@@ -1789,8 +2324,8 @@ class _ScribblePageState extends State<ScribblePage>
                   negativePrompt: negativePrompt,
                   cfgScale: cfg,
                   sampleSteps: steps,
-                  width: width,
-                  height: height,
+                  width: effectiveWidth, // Use effective width for output
+                  height: effectiveHeight, // Use effective height for output
                   seed: int.tryParse(seed) ?? -1,
                   sampleMethod: SampleMethod.values
                       .firstWhere(
@@ -1800,9 +2335,12 @@ class _ScribblePageState extends State<ScribblePage>
                         orElse: () => SampleMethod.EULER_A,
                       )
                       .index,
-                  controlImageData: _controlImageData,
-                  controlImageWidth: _controlWidth,
-                  controlImageHeight: _controlHeight,
+                  controlImageData:
+                      finalControlBytes, // Use final processed bytes
+                  controlImageWidth:
+                      finalControlWidth, // Use final processed width
+                  controlImageHeight:
+                      finalControlHeight, // Use final processed height
                   controlStrength: controlStrength,
                 );
               },
