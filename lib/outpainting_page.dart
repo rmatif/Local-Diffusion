@@ -22,6 +22,7 @@ import 'main.dart';
 import 'upscaler_page.dart';
 import 'photomaker_page.dart';
 import 'inpainting_page.dart';
+import 'image_processing_utils.dart'; // Import the image processing utils
 // import 'mask_editor.dart'; // Not directly needed for mask creation anymore
 
 class OutpaintingPage extends StatefulWidget {
@@ -107,6 +108,8 @@ class _OutpaintingPageState extends State<OutpaintingPage>
   CannyProcessor? _cannyProcessor;
   bool isCannyProcessing = false;
   Image? _cannyImage;
+  String _controlImageProcessingMode =
+      'Resize'; // 'Resize' or 'Crop' for ControlNet image
   final List<String> samplingMethods = const [
     'euler_a',
     'euler',
@@ -2600,6 +2603,36 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                               ),
                               const SizedBox(height: 16),
                             ],
+                            const SizedBox(height: 16),
+                            // Dropdown for Crop/Resize ControlNet Image
+                            Row(
+                              children: [
+                                const Text('Reference Handling:'),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: ShadSelect<String>(
+                                    placeholder:
+                                        Text(_controlImageProcessingMode),
+                                    options: const [
+                                      ShadOption(
+                                          value: 'Resize',
+                                          child: Text('Resize')),
+                                      ShadOption(
+                                          value: 'Crop', child: Text('Crop')),
+                                    ],
+                                    selectedOptionBuilder: (context, value) =>
+                                        Text(value),
+                                    onChanged: (String? value) {
+                                      if (value != null) {
+                                        setState(() =>
+                                            _controlImageProcessingMode =
+                                                value);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
                           ], // End of if(useControlImage)
                           // --- Control Strength ---
                           Row(
@@ -2864,30 +2897,91 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                 }
                 // --- End of Padded Input Image Creation ---
 
-                // Determine ControlNet input (logic remains the same)
-                Uint8List? finalControlImageData = _controlRgbBytes;
-                int? finalControlWidth = _controlWidth;
-                int? finalControlHeight = _controlHeight;
+                // --- Control Image Processing Logic ---
+                Uint8List? finalControlImageData;
+                int? finalControlWidth;
+                int? finalControlHeight;
 
-                if (useControlNet &&
-                    useControlImage &&
-                    useCanny &&
-                    _cannyProcessor?.resultRgbBytes != null) {
-                  finalControlImageData = _ensureRgbFormat(
-                      _cannyProcessor!.resultRgbBytes!,
-                      _cannyProcessor!.resultWidth!,
-                      _cannyProcessor!.resultHeight!);
-                  finalControlWidth = _cannyProcessor!.resultWidth;
-                  finalControlHeight = _cannyProcessor!.resultHeight;
-                } else if (useControlNet && !useControlImage) {
-                  finalControlImageData = null;
-                  finalControlWidth = null;
-                  finalControlHeight = null;
-                } else if (!useControlNet) {
+                // Determine the source control image data (Canny or original control image)
+                Uint8List? sourceControlBytes;
+                int? sourceControlWidth;
+                int? sourceControlHeight;
+
+                if (useControlNet && useControlImage) {
+                  if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
+                    // Use Canny result if available and Canny is enabled
+                    sourceControlBytes = _cannyProcessor!.resultRgbBytes!;
+                    sourceControlWidth = _cannyProcessor!.resultWidth!;
+                    sourceControlHeight = _cannyProcessor!.resultHeight!;
+                    // Ensure Canny result is RGB
+                    sourceControlBytes = _ensureRgbFormat(sourceControlBytes,
+                        sourceControlWidth, sourceControlHeight);
+                  } else if (_controlRgbBytes != null) {
+                    // Use original control image if Canny is not used or failed
+                    sourceControlBytes = _controlRgbBytes;
+                    sourceControlWidth = _controlWidth;
+                    sourceControlHeight = _controlHeight;
+                    // Ensure original control image is RGB (already done on load, but double-check)
+                    if (sourceControlBytes != null &&
+                        sourceControlWidth != null &&
+                        sourceControlHeight != null) {
+                      sourceControlBytes = _ensureRgbFormat(sourceControlBytes,
+                          sourceControlWidth, sourceControlHeight);
+                    }
+                  }
+                }
+
+                if (sourceControlBytes != null &&
+                    sourceControlWidth != null &&
+                    sourceControlHeight != null) {
+                  // Check if control image dimensions match the target OUTPUT size
+                  if (sourceControlWidth != finalOutputWidth ||
+                      sourceControlHeight != finalOutputHeight) {
+                    try {
+                      print(
+                          'Control image dimensions ($sourceControlWidth x $sourceControlHeight) differ from target ($finalOutputWidth x $finalOutputHeight). Processing using $_controlImageProcessingMode...');
+                      ProcessedImageData processedData;
+                      if (_controlImageProcessingMode == 'Crop') {
+                        processedData = cropImage(
+                            sourceControlBytes,
+                            sourceControlWidth,
+                            sourceControlHeight,
+                            finalOutputWidth,
+                            finalOutputHeight);
+                      } else {
+                        // Default to Resize
+                        processedData = resizeImage(
+                            sourceControlBytes,
+                            sourceControlWidth,
+                            sourceControlHeight,
+                            finalOutputWidth,
+                            finalOutputHeight);
+                      }
+                      finalControlImageData = processedData.bytes;
+                      finalControlWidth = processedData.width;
+                      finalControlHeight = processedData.height;
+                      print(
+                          'Control image processed to $finalControlWidth x $finalControlHeight.');
+                    } catch (e) {
+                      print("Error processing control image: $e");
+                      // Optionally show an error to the user
+                      _showTemporaryError('Error processing control image: $e');
+                      setState(() => isGenerating = false); // Stop generation
+                      return; // Prevent calling generateImage
+                    }
+                  } else {
+                    // Dimensions already match, use the source directly
+                    finalControlImageData = sourceControlBytes;
+                    finalControlWidth = sourceControlWidth;
+                    finalControlHeight = sourceControlHeight;
+                  }
+                } else {
+                  // No valid source control image, ensure control params are null
                   finalControlImageData = null;
                   finalControlWidth = null;
                   finalControlHeight = null;
                 }
+                // --- End Control Image Processing Logic ---
 
                 // --- Start Generation ---
                 setState(() {
