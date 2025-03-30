@@ -85,6 +85,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   Map<String, bool> loadedComponents = {};
   String loadingText = '';
   String _modelError = '';
+  List<String> _generationLogs = []; // To store logs for the last generation
+  bool _showLogsButton = false; // To control visibility of the log button
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -175,6 +177,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     _modelErrorTimer?.cancel();
     _processor?.dispose();
     _cannyProcessor?.dispose();
+    _promptController.dispose(); // Dispose the text controller
     super.dispose();
   }
 
@@ -308,6 +311,13 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       },
     );
 
+    // Listen for the collected logs after generation
+    _processor!.logListStream.listen((logs) {
+      setState(() {
+        _generationLogs = logs;
+      });
+    });
+
     _processor!.imageStream.listen((image) async {
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
 
@@ -315,6 +325,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
         isGenerating = false;
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
         status = 'Generation complete';
+        _showLogsButton = true; // Show the log button
       });
 
       await _processor!.saveGeneratedImage(
@@ -2592,129 +2603,149 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
               initialValue: seed,
             ),
             const SizedBox(height: 16),
-            ShadButton(
-              enabled: !(isModelLoading || isGenerating),
-              onPressed: () {
-                if (_processor == null) {
-                  _modelErrorTimer?.cancel();
-                  setState(() {
-                    _modelError = 'Please Load a model first';
-                  });
-                  _modelErrorTimer = Timer(const Duration(seconds: 10), () {
+            Row(
+              // Wrap buttons in a Row
+              children: [
+                ShadButton(
+                  enabled: !(isModelLoading || isGenerating),
+                  onPressed: () {
+                    if (_processor == null) {
+                      _modelErrorTimer?.cancel();
+                      setState(() {
+                        _modelError = 'Please Load a model first';
+                      });
+                      _modelErrorTimer = Timer(const Duration(seconds: 10), () {
+                        setState(() {
+                          _modelError = '';
+                        });
+                      });
+                      return;
+                    }
                     setState(() {
+                      isGenerating = true;
                       _modelError = '';
+                      status = 'Generating image...';
+                      progress = 0;
+                      _generationLogs = []; // Clear previous logs
+                      _showLogsButton =
+                          false; // Hide log button until generation finishes
                     });
-                  });
-                  return;
-                }
-                setState(() {
-                  isGenerating = true;
-                  _modelError = '';
-                  status = 'Generating image...';
-                  progress = 0;
-                });
 
-                // --- Control Image Processing Logic ---
-                Uint8List? finalControlBytes = _controlRgbBytes;
-                int? finalControlWidth = _controlWidth;
-                int? finalControlHeight = _controlHeight;
+                    // --- Control Image Processing Logic ---
+                    Uint8List? finalControlBytes = _controlRgbBytes;
+                    int? finalControlWidth = _controlWidth;
+                    int? finalControlHeight = _controlHeight;
 
-                // Determine the source image data (Canny or original control image)
-                Uint8List? sourceBytes;
-                int? sourceWidth;
-                int? sourceHeight;
+                    // Determine the source image data (Canny or original control image)
+                    Uint8List? sourceBytes;
+                    int? sourceWidth;
+                    int? sourceHeight;
 
-                if (useControlNet && useControlImage) {
-                  if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
-                    // Use Canny result if available and Canny is enabled
-                    sourceBytes = _cannyProcessor!.resultRgbBytes!;
-                    sourceWidth = _cannyProcessor!.resultWidth!;
-                    sourceHeight = _cannyProcessor!.resultHeight!;
-                    // Ensure Canny result is RGB
-                    sourceBytes = _ensureRgbFormat(
-                        sourceBytes, sourceWidth, sourceHeight);
-                  } else if (_controlRgbBytes != null) {
-                    // Use original control image if Canny is not used or failed
-                    sourceBytes = _controlRgbBytes;
-                    sourceWidth = _controlWidth;
-                    sourceHeight = _controlHeight;
-                    // Ensure original control image is RGB (already done on load, but double-check)
+                    if (useControlNet && useControlImage) {
+                      if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
+                        // Use Canny result if available and Canny is enabled
+                        sourceBytes = _cannyProcessor!.resultRgbBytes!;
+                        sourceWidth = _cannyProcessor!.resultWidth!;
+                        sourceHeight = _cannyProcessor!.resultHeight!;
+                        // Ensure Canny result is RGB
+                        sourceBytes = _ensureRgbFormat(
+                            sourceBytes, sourceWidth, sourceHeight);
+                      } else if (_controlRgbBytes != null) {
+                        // Use original control image if Canny is not used or failed
+                        sourceBytes = _controlRgbBytes;
+                        sourceWidth = _controlWidth;
+                        sourceHeight = _controlHeight;
+                        // Ensure original control image is RGB (already done on load, but double-check)
+                        if (sourceBytes != null &&
+                            sourceWidth != null &&
+                            sourceHeight != null) {
+                          sourceBytes = _ensureRgbFormat(
+                              sourceBytes, sourceWidth, sourceHeight);
+                        }
+                      }
+                    }
+
                     if (sourceBytes != null &&
                         sourceWidth != null &&
                         sourceHeight != null) {
-                      sourceBytes = _ensureRgbFormat(
-                          sourceBytes, sourceWidth, sourceHeight);
-                    }
-                  }
-                }
-
-                if (sourceBytes != null &&
-                    sourceWidth != null &&
-                    sourceHeight != null) {
-                  // Check if dimensions match the target output size
-                  if (sourceWidth != width || sourceHeight != height) {
-                    try {
-                      print(
-                          'Control image dimensions ($sourceWidth x $sourceHeight) differ from target ($width x $height). Processing using $_controlImageProcessingMode...');
-                      ProcessedImageData processedData;
-                      if (_controlImageProcessingMode == 'Crop') {
-                        processedData = cropImage(sourceBytes, sourceWidth,
-                            sourceHeight, width, height);
+                      // Check if dimensions match the target output size
+                      if (sourceWidth != width || sourceHeight != height) {
+                        try {
+                          print(
+                              'Control image dimensions ($sourceWidth x $sourceHeight) differ from target ($width x $height). Processing using $_controlImageProcessingMode...');
+                          ProcessedImageData processedData;
+                          if (_controlImageProcessingMode == 'Crop') {
+                            processedData = cropImage(sourceBytes, sourceWidth,
+                                sourceHeight, width, height);
+                          } else {
+                            // Default to Resize
+                            processedData = resizeImage(sourceBytes,
+                                sourceWidth, sourceHeight, width, height);
+                          }
+                          finalControlBytes = processedData.bytes;
+                          finalControlWidth = processedData.width;
+                          finalControlHeight = processedData.height;
+                          print(
+                              'Control image processed to $finalControlWidth x $finalControlHeight.');
+                        } catch (e) {
+                          print("Error processing control image: $e");
+                          // Optionally show an error to the user
+                          _showTemporaryError(
+                              'Error processing control image: $e');
+                          setState(
+                              () => isGenerating = false); // Stop generation
+                          return; // Prevent calling generateImage
+                        }
                       } else {
-                        // Default to Resize
-                        processedData = resizeImage(sourceBytes, sourceWidth,
-                            sourceHeight, width, height);
+                        // Dimensions already match, use the source directly
+                        finalControlBytes = sourceBytes;
+                        finalControlWidth = sourceWidth;
+                        finalControlHeight = sourceHeight;
                       }
-                      finalControlBytes = processedData.bytes;
-                      finalControlWidth = processedData.width;
-                      finalControlHeight = processedData.height;
-                      print(
-                          'Control image processed to $finalControlWidth x $finalControlHeight.');
-                    } catch (e) {
-                      print("Error processing control image: $e");
-                      // Optionally show an error to the user
-                      _showTemporaryError('Error processing control image: $e');
-                      setState(() => isGenerating = false); // Stop generation
-                      return; // Prevent calling generateImage
+                    } else {
+                      // No valid source image, ensure control params are null
+                      finalControlBytes = null;
+                      finalControlWidth = null;
+                      finalControlHeight = null;
                     }
-                  } else {
-                    // Dimensions already match, use the source directly
-                    finalControlBytes = sourceBytes;
-                    finalControlWidth = sourceWidth;
-                    finalControlHeight = sourceHeight;
-                  }
-                } else {
-                  // No valid source image, ensure control params are null
-                  finalControlBytes = null;
-                  finalControlWidth = null;
-                  finalControlHeight = null;
-                }
-                // --- End Control Image Processing Logic ---
+                    // --- End Control Image Processing Logic ---
 
-                _processor!.generateImage(
-                  prompt: prompt,
-                  negativePrompt: negativePrompt,
-                  cfgScale: cfg,
-                  sampleSteps: steps,
-                  width: width, // Target width
-                  height: height, // Target height
-                  seed: int.tryParse(seed) ?? -1,
-                  sampleMethod: SampleMethod.values
-                      .firstWhere(
-                        (method) =>
-                            method.displayName.toLowerCase() ==
-                            samplingMethod.toLowerCase(),
-                        orElse: () => SampleMethod.EULER_A,
-                      )
-                      .index,
-                  controlImageData: finalControlBytes, // Use processed bytes
-                  controlImageWidth: finalControlWidth, // Use processed width
-                  controlImageHeight:
-                      finalControlHeight, // Use processed height
-                  controlStrength: controlStrength,
-                );
-              },
-              child: const Text('Generate'),
+                    _processor!.generateImage(
+                      prompt: prompt,
+                      negativePrompt: negativePrompt,
+                      cfgScale: cfg,
+                      sampleSteps: steps,
+                      width: width, // Target width
+                      height: height, // Target height
+                      seed: int.tryParse(seed) ?? -1,
+                      sampleMethod: SampleMethod.values
+                          .firstWhere(
+                            (method) =>
+                                method.displayName.toLowerCase() ==
+                                samplingMethod.toLowerCase(),
+                            orElse: () => SampleMethod.EULER_A,
+                          )
+                          .index,
+                      controlImageData:
+                          finalControlBytes, // Use processed bytes
+                      controlImageWidth:
+                          finalControlWidth, // Use processed width
+                      controlImageHeight:
+                          finalControlHeight, // Use processed height
+                      controlStrength: controlStrength,
+                    );
+                  },
+                  child: const Text('Generate'),
+                ),
+                const SizedBox(width: 8), // Add spacing between buttons
+                if (_showLogsButton &&
+                    _generationLogs
+                        .isNotEmpty) // Conditionally show the log button only if logs exist
+                  ShadButton.outline(
+                    onPressed: _showLogsDialog,
+                    child: const Text('Show Logs'),
+                  ),
+              ],
             ),
             if (_modelError.isNotEmpty)
               Padding(
@@ -2741,6 +2772,38 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  // Method to show the logs dialog
+  void _showLogsDialog() {
+    showShadDialog(
+      context: context,
+      builder: (context) => ShadDialog.alert(
+        constraints:
+            const BoxConstraints(maxWidth: 600, maxHeight: 500), // Adjust size
+        title: const Text('Generation Logs'),
+        description: SizedBox(
+          // Constrain the height of the scrollable area
+          height: 300, // Adjust height as needed
+          child: SingleChildScrollView(
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: SelectableText(
+                _generationLogs.join('\n'), // Join logs with newlines
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          ShadButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
