@@ -18,6 +18,7 @@ import 'package:image/image.dart' as img;
 import 'canny_processor.dart';
 import 'scribble2img_page.dart';
 import 'outpainting_page.dart';
+import 'image_processing_utils.dart'; // Import the new utility
 
 void main() {
   runApp(const MyApp());
@@ -117,6 +118,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   CannyProcessor? _cannyProcessor;
   bool isCannyProcessing = false;
   Image? _cannyImage;
+  String _controlImageProcessingMode = 'Resize'; // 'Resize' or 'Crop'
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -2370,6 +2372,36 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                               ),
                             ),
                             const SizedBox(height: 16),
+                            // Dropdown for Crop/Resize
+                            Row(
+                              children: [
+                                const Text('Reference Handling:'),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: ShadSelect<String>(
+                                    placeholder:
+                                        Text(_controlImageProcessingMode),
+                                    options: const [
+                                      ShadOption(
+                                          value: 'Resize',
+                                          child: Text('Resize')),
+                                      ShadOption(
+                                          value: 'Crop', child: Text('Crop')),
+                                    ],
+                                    selectedOptionBuilder: (context, value) =>
+                                        Text(value),
+                                    onChanged: (String? value) {
+                                      if (value != null) {
+                                        setState(() =>
+                                            _controlImageProcessingMode =
+                                                value);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
                             // Left-aligned checkbox for "Use Canny"
                             Align(
                               alignment: Alignment.centerLeft,
@@ -2581,13 +2613,91 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   status = 'Generating image...';
                   progress = 0;
                 });
+
+                // --- Control Image Processing Logic ---
+                Uint8List? finalControlBytes = _controlRgbBytes;
+                int? finalControlWidth = _controlWidth;
+                int? finalControlHeight = _controlHeight;
+
+                // Determine the source image data (Canny or original control image)
+                Uint8List? sourceBytes;
+                int? sourceWidth;
+                int? sourceHeight;
+
+                if (useControlNet && useControlImage) {
+                  if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
+                    // Use Canny result if available and Canny is enabled
+                    sourceBytes = _cannyProcessor!.resultRgbBytes!;
+                    sourceWidth = _cannyProcessor!.resultWidth!;
+                    sourceHeight = _cannyProcessor!.resultHeight!;
+                    // Ensure Canny result is RGB
+                    sourceBytes = _ensureRgbFormat(
+                        sourceBytes, sourceWidth, sourceHeight);
+                  } else if (_controlRgbBytes != null) {
+                    // Use original control image if Canny is not used or failed
+                    sourceBytes = _controlRgbBytes;
+                    sourceWidth = _controlWidth;
+                    sourceHeight = _controlHeight;
+                    // Ensure original control image is RGB (already done on load, but double-check)
+                    if (sourceBytes != null &&
+                        sourceWidth != null &&
+                        sourceHeight != null) {
+                      sourceBytes = _ensureRgbFormat(
+                          sourceBytes, sourceWidth, sourceHeight);
+                    }
+                  }
+                }
+
+                if (sourceBytes != null &&
+                    sourceWidth != null &&
+                    sourceHeight != null) {
+                  // Check if dimensions match the target output size
+                  if (sourceWidth != width || sourceHeight != height) {
+                    try {
+                      print(
+                          'Control image dimensions ($sourceWidth x $sourceHeight) differ from target ($width x $height). Processing using $_controlImageProcessingMode...');
+                      ProcessedImageData processedData;
+                      if (_controlImageProcessingMode == 'Crop') {
+                        processedData = cropImage(sourceBytes, sourceWidth,
+                            sourceHeight, width, height);
+                      } else {
+                        // Default to Resize
+                        processedData = resizeImage(sourceBytes, sourceWidth,
+                            sourceHeight, width, height);
+                      }
+                      finalControlBytes = processedData.bytes;
+                      finalControlWidth = processedData.width;
+                      finalControlHeight = processedData.height;
+                      print(
+                          'Control image processed to $finalControlWidth x $finalControlHeight.');
+                    } catch (e) {
+                      print("Error processing control image: $e");
+                      // Optionally show an error to the user
+                      _showTemporaryError('Error processing control image: $e');
+                      setState(() => isGenerating = false); // Stop generation
+                      return; // Prevent calling generateImage
+                    }
+                  } else {
+                    // Dimensions already match, use the source directly
+                    finalControlBytes = sourceBytes;
+                    finalControlWidth = sourceWidth;
+                    finalControlHeight = sourceHeight;
+                  }
+                } else {
+                  // No valid source image, ensure control params are null
+                  finalControlBytes = null;
+                  finalControlWidth = null;
+                  finalControlHeight = null;
+                }
+                // --- End Control Image Processing Logic ---
+
                 _processor!.generateImage(
                   prompt: prompt,
                   negativePrompt: negativePrompt,
                   cfgScale: cfg,
                   sampleSteps: steps,
-                  width: width,
-                  height: height,
+                  width: width, // Target width
+                  height: height, // Target height
                   seed: int.tryParse(seed) ?? -1,
                   sampleMethod: SampleMethod.values
                       .firstWhere(
@@ -2597,21 +2707,10 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                         orElse: () => SampleMethod.EULER_A,
                       )
                       .index,
-                  controlImageData:
-                      useCanny && _cannyProcessor?.resultRgbBytes != null
-                          ? _ensureRgbFormat(
-                              _cannyProcessor!.resultRgbBytes!,
-                              _cannyProcessor!.resultWidth!,
-                              _cannyProcessor!.resultHeight!)
-                          : _controlRgbBytes,
-                  controlImageWidth:
-                      useCanny && _cannyProcessor?.resultWidth != null
-                          ? _cannyProcessor!.resultWidth
-                          : _controlWidth,
+                  controlImageData: finalControlBytes, // Use processed bytes
+                  controlImageWidth: finalControlWidth, // Use processed width
                   controlImageHeight:
-                      useCanny && _cannyProcessor?.resultHeight != null
-                          ? _cannyProcessor!.resultHeight
-                          : _controlHeight,
+                      finalControlHeight, // Use processed height
                   controlStrength: controlStrength,
                 );
               },
