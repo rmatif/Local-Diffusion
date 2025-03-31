@@ -16,14 +16,41 @@ List<String> _collectedLogs = []; // Added to collect logs within the isolate
 late final Pointer<NativeFunction<LogCallbackNative>> _logCallbackPtr;
 late final Pointer<NativeFunction<ProgressCallbackNative>> _progressCallbackPtr;
 
+// Static FFI log callback (Updated with error detection)
 void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
   final message = text.toDartString();
-
-  // Also add to the collected logs list
   final logEntry = '[Log L$level] $message';
-  _collectedLogs.add(logEntry);
+  _collectedLogs.add(logEntry); // Add to collected logs first
 
-  // Send immediately for real-time updates (optional, but kept for existing behavior)
+  // Check for specific error messages during loading
+  if (message.contains("get sd version from file failed") ||
+      message.contains("new_sd_ctx_t failed") ||
+      message.contains("load tensors from model loader failed")) {
+    _globalSendPort?.send({
+      'type': 'error',
+      'errorType': 'modelError',
+      'message': 'Unsupported model format or corrupted file.',
+    });
+    // Optionally return here if you don't want to send the raw log for these errors
+    // return;
+  } else if (message.contains("load tae tensors from model loader failed")) {
+    _globalSendPort?.send({
+      'type': 'error',
+      'errorType': 'taesdError',
+      'message': 'Unsupported TAESD model format or corrupted file.',
+    });
+    // return;
+  } else if (message
+      .contains("load control net tensors from model loader failed")) {
+    _globalSendPort?.send({
+      'type': 'error',
+      'errorType': 'controlNetError',
+      'message': 'Unsupported ControlNet model format or corrupted file.',
+    });
+    // return;
+  }
+
+  // Handle seed extraction for logs (if needed)
   if (message.contains("generating image")) {
     final seedMatch = RegExp(r'seed (\d+)').firstMatch(message);
     if (seedMatch != null) {
@@ -34,15 +61,15 @@ void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
         'message': message,
         'seed': extractedSeed
       });
-      return;
-      // Don't return here, let it fall through to send the basic log message too if needed
+      // Don't return, allow the general log message below if needed
     }
   }
 
+  // Send the general log message for other cases or if not returned above
   _globalSendPort?.send({
     'type': 'log',
     'level': level,
-    'message': message, // Send the original message for compatibility
+    'message': message,
   });
 }
 
@@ -226,8 +253,16 @@ class Img2ImgProcessor {
             // Handle the collected logs
             _logListController.add(List<String>.from(message['logs']));
           } else if (message['type'] == 'error') {
-            print("Error from isolate: ${message['message']}");
-            // Optionally propagate the error further
+            // Handle errors from isolate
+            print(
+                "Error from isolate (${message['errorType']}): ${message['message']}");
+            // Propagate the specific error type and message to the UI via onLog
+            if (onLog != null) {
+              onLog!(LogMessage(
+                  -1, // Indicate error level
+                  "Error (${message['errorType']}): ${message['message']}"));
+            }
+            // The UI (_img2img_page) listens to onLog and calls _handleLoadingError
           }
         }
       });
@@ -338,12 +373,24 @@ class Img2ImgProcessor {
               calloc.free(emptyUtf8);
 
               if (ctx != null && ctx!.address != 0) {
-                print("Model initialized successfully");
+                print("Model initialized successfully in isolate");
                 mainSendPort.send({'type': 'modelLoaded'});
               } else {
-                print("Failed to initialize model");
-                mainSendPort.send(
-                    {'type': 'error', 'message': 'Failed to initialize model'});
+                // Check if an error was already sent by the log callback
+                print(
+                    "Failed to initialize model in isolate (ctx is null or address is 0)");
+                bool specificErrorSent = _collectedLogs.any((log) =>
+                    log.contains("failed") || // Basic check
+                    log.contains("error")); // Basic check
+
+                if (!specificErrorSent) {
+                  mainSendPort.send({
+                    'type': 'error',
+                    'errorType': 'modelError', // Generic model error
+                    'message':
+                        'Failed to initialize model context. Check model compatibility or file integrity.'
+                  });
+                }
               }
             } catch (e) {
               print("Error initializing model: $e");
@@ -509,8 +556,8 @@ class Img2ImgProcessor {
                     "Error generating image in isolate: $e"); // More specific log
                 mainSendPort.send({
                   'type': 'error',
-                  'message':
-                      "Generation error: ${e.toString()}" // Include error type
+                  'errorType': 'generationError', // Specific error type
+                  'message': "Generation error: ${e.toString()}"
                 });
                 // Send logs even if there was an error during generation
                 mainSendPort.send({

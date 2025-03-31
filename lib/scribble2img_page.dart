@@ -67,7 +67,9 @@ class _ScribblePageState extends State<ScribblePage>
   String status = '';
   Map<String, bool> loadedComponents = {};
   String loadingText = '';
-  String _modelError = '';
+  String _loadingError = ''; // Consolidated error message
+  String _loadingErrorType = ''; // To track which component failed
+  Timer? _loadingErrorTimer; // Timer to clear the loading error
   String? _taesdPath;
   String? _loraPath;
   String? _vaePath;
@@ -146,8 +148,11 @@ class _ScribblePageState extends State<ScribblePage>
   @override
   void dispose() {
     _errorMessageTimer?.cancel();
-    _modelErrorTimer?.cancel();
+    // _modelErrorTimer?.cancel(); // Removed
+    _loadingErrorTimer?.cancel(); // Cancel the general loading error timer
     _processor?.dispose();
+    _drawingController.dispose(); // Dispose drawing controller
+    _promptController.dispose(); // Dispose text controller
     super.dispose();
   }
 
@@ -188,9 +193,13 @@ class _ScribblePageState extends State<ScribblePage>
           _message = 'Model initialized successfully';
           loadedComponents['Model'] = true;
           loadingText = '';
+          _loadingError = ''; // Clear any previous loading errors on success
+          _loadingErrorType = '';
+          _loadingErrorTimer?.cancel();
         });
       },
       onLog: (log) {
+        // Handle RAM usage log
         if (log.message.contains('total params memory size')) {
           final regex = RegExp(r'total params memory size = ([\d.]+)MB');
           final match = regex.firstMatch(log.message);
@@ -200,7 +209,20 @@ class _ScribblePageState extends State<ScribblePage>
             });
           }
         }
-        developer.log(log.message);
+
+        // Check for error messages passed via the log stream
+        if (log.level == -1 && log.message.startsWith("Error (")) {
+          final errorMatch =
+              RegExp(r'Error \((.*?)\): (.*)').firstMatch(log.message);
+          if (errorMatch != null) {
+            final errorType = errorMatch.group(1)!;
+            final errorMessage = errorMatch.group(2)!;
+            _handleLoadingError(errorType, errorMessage); // Use the new handler
+          }
+        } else {
+          // Log other messages normally
+          developer.log(log.message);
+        }
       },
       onProgress: (progress) {
         setState(() {
@@ -244,6 +266,81 @@ class _ScribblePageState extends State<ScribblePage>
       });
     });
   }
+
+  // --- Copied Error Handling Logic from main.dart ---
+  // New method to handle loading errors centrally - FULL RESET
+  void _handleLoadingError(String errorType, String errorMessage) {
+    _loadingErrorTimer?.cancel(); // Cancel previous timer if any
+
+    // Dispose the processor and kill the isolate regardless of error type
+    _processor?.dispose();
+
+    setState(() {
+      _processor = null; // Set processor to null
+      isModelLoading = false; // Stop loading indicator
+      loadingText = ''; // Clear loading text
+      _loadingError = errorMessage; // Display the specific error
+      _loadingErrorType = errorType; // Store error type if needed elsewhere
+
+      // --- Full Reset ---
+      // Clear all loaded component indicators
+      loadedComponents.clear();
+      // Reset all paths
+      _taesdPath = null;
+      _loraPath = null;
+      // Scribble doesn't use Clip L/G/T5XXL directly in this setup
+      _vaePath = null;
+      _embedDirPath = null;
+      _controlNetPath = null;
+      // Reset related flags
+      useTAESD = false;
+      useVAE = false;
+      useVAETiling = false;
+      // Reset other related state specific to scribble
+      _loraNames = [];
+      _ramUsage = ''; // Clear RAM usage display
+      _drawingImageData = null; // Reset drawing
+      _hasDrawing = false;
+      _originalDrawingWidth = null;
+      _originalDrawingHeight = null;
+      _originalDrawingRgbBytes = null;
+      _showCropUI = false; // Hide crop UI
+      _cropRect = Rect.zero;
+      _imageDisplaySize = Size.zero;
+      _controlImageData = null; // Reset control data derived from drawing
+      _controlWidth = null;
+      _controlHeight = null;
+      _message = ''; // Clear success messages too
+      _taesdMessage = '';
+      _loraMessage = '';
+
+      // Handle generation-specific errors separately if needed
+      if (errorType == 'generationError') {
+        status = 'Generation failed: $errorMessage';
+        isGenerating = false; // Stop generation indicator
+      } else if (errorType == 'inputError' || errorType == 'dimensionError') {
+        status = '';
+        progress = 0;
+      } else {
+        // For loading errors, clear status too
+        status = '';
+        progress = 0;
+      }
+      // --- End Full Reset ---
+
+      // Clear the error message after a delay
+      _loadingErrorTimer = Timer(const Duration(seconds: 10), () {
+        if (mounted) {
+          // Check if the widget is still in the tree
+          setState(() {
+            _loadingError = '';
+            _loadingErrorType = '';
+          });
+        }
+      });
+    });
+  }
+  // --- End Copied Error Handling Logic ---
 
   // Method to show the logs dialog (Copied from main.dart)
   void _showLogsDialog() {
@@ -1139,57 +1236,85 @@ class _ScribblePageState extends State<ScribblePage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (loadingText.isNotEmpty || loadedComponents.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: loadedComponents.entries
-                          .map((entry) => Text.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: '${entry.key} loaded ',
-                                      style: theme.textTheme.p.copyWith(
-                                        color: Colors.green,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const WidgetSpan(
-                                      child: Icon(Icons.check,
-                                          size: 20, color: Colors.green),
-                                    ),
-                                  ],
-                                ),
-                              )
-                                  .animate()
-                                  .fadeIn(
-                                      duration:
-                                          const Duration(milliseconds: 500))
-                                  .slideY(begin: -0.2, end: 0))
-                          .toList(),
-                    ),
-                    if (loadingText.isNotEmpty) const SizedBox(height: 8),
-                    if (loadingText.isNotEmpty)
-                      TweenAnimationBuilder(
-                        duration: const Duration(milliseconds: 800),
-                        tween: Tween(begin: 0.0, end: 1.0),
-                        builder: (context, value, child) {
-                          return Text(
-                            '$loadingText${'.' * ((value * 5).floor())}',
+            // Display Loading Status / Success / Error Messages (Copied)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Display Loading Error FIRST if present
+                  if (_loadingError.isNotEmpty)
+                    Text.rich(
+                      TextSpan(
+                        children: [
+                          const WidgetSpan(
+                            child: Icon(
+                              Icons.error_outline, // Error Icon
+                              size: 20,
+                              color: Colors.red,
+                            ),
+                            alignment: PlaceholderAlignment.middle,
+                          ),
+                          const WidgetSpan(child: SizedBox(width: 6)),
+                          TextSpan(
+                            text: _loadingError, // Display the error message
                             style: theme.textTheme.p.copyWith(
-                              color: Colors.orange,
+                              color: Colors.red,
                               fontWeight: FontWeight.bold,
                             ),
-                          );
-                        },
-                      ).animate().fadeIn(),
-                  ],
-                ),
+                          ),
+                        ],
+                      ),
+                    )
+                        .animate()
+                        .fadeIn(duration: const Duration(milliseconds: 300))
+                        .shake(hz: 4, offset: const Offset(2, 0)), // Use offset
+                  // Display Success Messages ONLY if NO loading error is active
+                  if (_loadingError.isEmpty)
+                    ...loadedComponents.entries.map((entry) => Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '${entry.key} loaded ',
+                                style: theme.textTheme.p.copyWith(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const WidgetSpan(
+                                child: Icon(
+                                  Icons.check_circle_outline, // Check Icon
+                                  size: 20,
+                                  color: Colors.green,
+                                ),
+                                alignment: PlaceholderAlignment.middle,
+                              ),
+                            ],
+                          ),
+                        )
+                            .animate()
+                            .fadeIn(duration: const Duration(milliseconds: 500))
+                            .slideY(begin: -0.2, end: 0)),
+                  // Display Loading Text if loading and NO error
+                  if (loadingText.isNotEmpty && _loadingError.isEmpty)
+                    const SizedBox(height: 8),
+                  if (loadingText.isNotEmpty && _loadingError.isEmpty)
+                    TweenAnimationBuilder(
+                      duration: const Duration(milliseconds: 800),
+                      tween: Tween(begin: 0.0, end: 1.0),
+                      builder: (context, value, child) {
+                        return Text(
+                          '$loadingText${'.' * ((value * 5).floor())}',
+                          style: theme.textTheme.p.copyWith(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        );
+                      },
+                    ).animate().fadeIn(),
+                ],
               ),
+            ),
             Row(
               children: [
                 ShadButton(
@@ -2291,21 +2416,27 @@ class _ScribblePageState extends State<ScribblePage>
                   onPressed: () async {
                     // Make onPressed async
                     if (_processor == null) {
-                      _modelErrorTimer?.cancel();
-                      setState(() => _modelError = 'Please Load a model first');
-                      _modelErrorTimer = Timer(const Duration(seconds: 10),
-                          () => setState(() => _modelError = ''));
+                      _handleLoadingError(
+                          'modelError', 'Please load a model first.');
                       return;
                     }
                     if (!_hasDrawing || _originalDrawingRgbBytes == null) {
-                      // Check for original data too
-                      _showTemporaryError('Please create a drawing first');
+                      _handleLoadingError(
+                          'inputError', 'Please create a drawing first.');
                       return;
+                    }
+                    // Clear any previous loading errors before generating
+                    if (_loadingError.isNotEmpty) {
+                      setState(() {
+                        _loadingError = '';
+                        _loadingErrorType = '';
+                        _loadingErrorTimer?.cancel();
+                      });
                     }
 
                     setState(() {
                       isGenerating = true;
-                      _modelError = '';
+                      // _modelError = ''; // Removed
                       status = 'Preparing drawing...'; // Update status
                       progress = 0;
                       _generationLogs = []; // Clear previous logs
@@ -2352,7 +2483,8 @@ class _ScribblePageState extends State<ScribblePage>
                     if (finalControlBytes == null ||
                         finalControlWidth == null ||
                         finalControlHeight == null) {
-                      _showTemporaryError('Failed to prepare drawing data.');
+                      _handleLoadingError(
+                          'inputError', 'Failed to prepare drawing data.');
                       setState(() => isGenerating = false);
                       return;
                     }
@@ -2404,15 +2536,7 @@ class _ScribblePageState extends State<ScribblePage>
                   ),
               ],
             ),
-            if (_modelError.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Text(
-                  _modelError,
-                  style: const TextStyle(
-                      color: Colors.red, fontWeight: FontWeight.bold),
-                ),
-              ),
+            // Removed old _modelError display logic
             const SizedBox(height: 16),
             LinearProgressIndicator(
               value: progress,
