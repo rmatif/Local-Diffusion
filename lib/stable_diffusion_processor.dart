@@ -13,7 +13,7 @@ import 'sd_image.dart';
 // Global variables for the isolate
 SendPort? _globalSendPort;
 List<String> _collectedLogs = []; // Added to collect logs within the isolate
-
+String? _lastGenerationTime; // Added to store the last generation time
 // FFI callback pointers
 late final Pointer<NativeFunction<LogCallbackNative>> _logCallbackPtr;
 late final Pointer<NativeFunction<ProgressCallbackNative>> _progressCallbackPtr;
@@ -68,6 +68,17 @@ void _staticLogCallback(int level, Pointer<Utf8> text, Pointer<Void> data) {
   }
 
   // Send the general log message for other cases or if not returned above
+  // --- Extract generation time ---
+  if (message.contains("txt2img completed in")) {
+    final timeMatch =
+        RegExp(r'txt2img completed in ([\d.]+)s').firstMatch(message);
+    if (timeMatch != null) {
+      _lastGenerationTime = "${timeMatch.group(1)!}s";
+      print("Isolate: Extracted generation time: $_lastGenerationTime");
+      // Don't send this specific log, just store the time.
+      return; // Prevent sending this log message itself
+    }
+  }
   _globalSendPort?.send({
     'type': 'log',
     'level': level,
@@ -122,14 +133,18 @@ class StableDiffusionProcessor {
   late SendPort _sdSendPort;
   final Completer _uninitialized = Completer();
   final ReceivePort _receivePort = ReceivePort();
-  final StreamController<ui.Image> _imageController =
-      StreamController<ui.Image>.broadcast();
+  // final StreamController<ui.Image> _imageController = StreamController<ui.Image>.broadcast(); // Replaced
+  final StreamController<Map<String, dynamic>> _generationResultController =
+      StreamController<
+          Map<String, dynamic>>.broadcast(); // New controller for image + time
   final StreamController<List<String>> _logListController =
       StreamController<List<String>>.broadcast(); // Added for logs
   final _loadingController = StreamController<bool>.broadcast();
 
   Stream<bool> get loadingStream => _loadingController.stream;
-  Stream<ui.Image> get imageStream => _imageController.stream;
+  // Stream<ui.Image> get imageStream => _imageController.stream; // Replaced
+  Stream<Map<String, dynamic>> get generationResultStream =>
+      _generationResultController.stream; // Getter for the new stream
   Stream<List<String>> get logListStream =>
       _logListController.stream; // Added getter for logs
 
@@ -259,7 +274,12 @@ class StableDiffusionProcessor {
                 completer.complete,
               );
               final image = await completer.future;
-              _imageController.add(image);
+              final generationTime = message['generationTime']; // Extract time
+              // Add both image and time to the new stream
+              _generationResultController.add({
+                'image': image,
+                'generationTime': generationTime,
+              });
               break;
             case 'logs': // Handle the collected logs
               _logListController.add(List<String>.from(message['logs']));
@@ -469,6 +489,7 @@ class StableDiffusionProcessor {
             break;
 
           case 'generate':
+            _lastGenerationTime = null; // Reset time before generation
             _collectedLogs.clear(); // Clear logs before starting generation
             if (ctx == null || ctx!.address == 0) {
               print("Context is null in isolate, cannot generate image");
@@ -621,6 +642,7 @@ class StableDiffusionProcessor {
                     'bytes': rgbaBytes,
                     'width': message['width'],
                     'height': message['height'],
+                    'generationTime': _lastGenerationTime, // Include the time
                   });
                 } else {
                   print(
@@ -810,7 +832,8 @@ class StableDiffusionProcessor {
     });
 
     _receivePort.close();
-    _imageController.close();
+    // _imageController.close(); // Replaced
+    _generationResultController.close(); // Close the new result controller
     _logListController.close(); // Close the new controller
     print("StableDiffusionProcessor disposed.");
   }

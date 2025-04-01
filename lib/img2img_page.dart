@@ -375,15 +375,25 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       });
     });
 
-    _processor!.imageStream.listen((image) async {
+    _processor!.generationResultStream.listen((result) async {
+      // Use new stream
+      final ui.Image image = result['image']; // Extract image from map
+      final String? generationTime =
+          result['generationTime']; // Extract time from map
+
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+
       setState(() {
         isGenerating = false;
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
-        status = 'Generation complete';
+        // Update status using the extracted time
+        status = generationTime != null
+            ? 'Generation completed in $generationTime'
+            : 'Generation complete';
         _showLogsButton = true; // Show the log button
       });
 
+      // Save the extracted image
       await _processor!.saveGeneratedImage(
         image,
         prompt,
@@ -396,9 +406,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         ),
       );
 
-      setState(() {
-        status = 'Generation complete';
-      });
+      // No need for the redundant status update here
     });
   }
 

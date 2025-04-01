@@ -480,17 +480,25 @@ class _InpaintingPageState extends State<InpaintingPage>
       },
     );
 
-    _processor!.imageStream.listen((image) async {
+    _processor!.generationResultStream.listen((result) async {
+      // Use new stream
+      final ui.Image image = result['image']; // Extract image from map
+      final String? generationTime = result['generationTime']; // Extract time
+
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+
       setState(() {
         isGenerating = false;
         _generatedImage = Image.memory(bytes!.buffer.asUint8List());
-        status = 'Generation complete';
+        // Update status using the extracted time
+        status = generationTime != null
+            ? 'Generation completed in $generationTime'
+            : 'Generation complete';
         _showLogsButton = true; // Show the log button
       });
 
       await _processor!.saveGeneratedImage(
-        image,
+        image, // Use extracted image
         prompt,
         width,
         height,
@@ -501,9 +509,7 @@ class _InpaintingPageState extends State<InpaintingPage>
         ),
       );
 
-      setState(() {
-        status = 'Generation complete';
-      });
+      // No need for the redundant status update here
     });
 
     // Listen for the collected logs after generation
