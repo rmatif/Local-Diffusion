@@ -494,11 +494,12 @@ class Img2ImgProcessor {
                     ..data = controlDataPtr!; // Add null check
                 }
 
-                // --- Prepare skip_layers (Copied from stable_diffusion_processor) ---
+                // --- Prepare skip_layers (Copied and modified from stable_diffusion_processor) ---
                 Pointer<Int32>? skipLayersPtr; // Pointer for skip_layers array
                 int skipLayersCount = 0; // Count for skip_layers
                 final String? skipLayersText = message['skipLayersText'];
                 if (skipLayersText != null && skipLayersText.isNotEmpty) {
+                  // Existing logic to parse skipLayersText
                   try {
                     // Parse the string "[num1,num2,...]" or "num1,num2,..."
                     String numbersString = skipLayersText;
@@ -521,16 +522,34 @@ class Img2ImgProcessor {
                       print(
                           "Isolate (Img2Img): Parsed skip_layers: ${layerIndices.join(', ')} (Count: $skipLayersCount)");
                     } else {
-                      skipLayersPtr = nullptr;
+                      // Parsing resulted in empty list, use default
+                      print(
+                          "Isolate (Img2Img): Parsed skip_layers resulted in empty list, using default [7, 8, 9]");
+                      skipLayersCount = 3;
+                      skipLayersPtr = malloc<Int32>(skipLayersCount);
+                      skipLayersPtr[0] = 7;
+                      skipLayersPtr[1] = 8;
+                      skipLayersPtr[2] = 9;
                     }
                   } catch (e) {
                     print(
-                        "Isolate (Img2Img): Error parsing skip_layers '$skipLayersText': $e");
-                    skipLayersPtr = nullptr;
-                    skipLayersCount = 0;
+                        "Isolate (Img2Img): Error parsing skip_layers '$skipLayersText': $e. Using default [7, 8, 9]");
+                    // Error parsing, use default
+                    skipLayersCount = 3;
+                    skipLayersPtr = malloc<Int32>(skipLayersCount);
+                    skipLayersPtr[0] = 7;
+                    skipLayersPtr[1] = 8;
+                    skipLayersPtr[2] = 9;
                   }
                 } else {
-                  skipLayersPtr = nullptr;
+                  // skipLayersText is null or empty, use default
+                  print(
+                      "Isolate (Img2Img): skipLayersText is null or empty, using default [7, 8, 9]");
+                  skipLayersCount = 3;
+                  skipLayersPtr = malloc<Int32>(skipLayersCount);
+                  skipLayersPtr[0] = 7;
+                  skipLayersPtr[1] = 8;
+                  skipLayersPtr[2] = 9;
                 }
                 // --- End Prepare skip_layers ---
 

@@ -501,8 +501,8 @@ class StableDiffusionProcessor {
               // --- Prepare skip_layers ---
               final String? skipLayersText = message['skipLayersText'];
               if (skipLayersText != null && skipLayersText.isNotEmpty) {
+                // Existing logic to parse skipLayersText
                 try {
-                  // Parse the string "[num1,num2,...]"
                   final numbersString =
                       skipLayersText.substring(1, skipLayersText.length - 1);
                   final layerIndices = numbersString
@@ -519,19 +519,34 @@ class StableDiffusionProcessor {
                     print(
                         "Isolate: Parsed skip_layers: ${layerIndices.join(', ')} (Count: $skipLayersCount)");
                   } else {
-                    skipLayersPtr =
-                        nullptr; // Ensure it's null if parsing results in empty list
+                    // Parsing resulted in empty list, use default
+                    print(
+                        "Isolate: Parsed skip_layers resulted in empty list, using default [7, 8, 9]");
+                    skipLayersCount = 3;
+                    skipLayersPtr = malloc<Int32>(skipLayersCount);
+                    skipLayersPtr[0] = 7;
+                    skipLayersPtr[1] = 8;
+                    skipLayersPtr[2] = 9;
                   }
                 } catch (e) {
                   print(
-                      "Isolate: Error parsing skip_layers '$skipLayersText': $e");
-                  skipLayersPtr = nullptr; // Set to null on error
-                  skipLayersCount = 0;
-                  // Optionally send an error back? For now, just log and proceed without skip_layers.
+                      "Isolate: Error parsing skip_layers '$skipLayersText': $e. Using default [7, 8, 9]");
+                  // Error parsing, use default
+                  skipLayersCount = 3;
+                  skipLayersPtr = malloc<Int32>(skipLayersCount);
+                  skipLayersPtr[0] = 7;
+                  skipLayersPtr[1] = 8;
+                  skipLayersPtr[2] = 9;
                 }
               } else {
-                skipLayersPtr =
-                    nullptr; // Explicitly null if text is null or empty
+                // skipLayersText is null or empty, use default
+                print(
+                    "Isolate: skipLayersText is null or empty, using default [7, 8, 9]");
+                skipLayersCount = 3;
+                skipLayersPtr = malloc<Int32>(skipLayersCount);
+                skipLayersPtr[0] = 7;
+                skipLayersPtr[1] = 8;
+                skipLayersPtr[2] = 9;
               }
               // --- End Prepare skip_layers ---
 
