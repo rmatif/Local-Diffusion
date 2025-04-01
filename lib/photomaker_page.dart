@@ -85,6 +85,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   final TextEditingController _skipLayersController = TextEditingController();
   String? _skipLayersErrorText;
   // --- End added state variables ---
+  bool normalizeInput = false; // Added for normalize_input option
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -1832,6 +1833,31 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                 ),
               ],
             ),
+            const SizedBox(height: 16), // Added spacing
+            Row(
+              // Added Row for Normalize Input
+              children: [
+                const Text('Normalize Input'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<bool>(
+                    placeholder:
+                        Text(normalizeInput.toString()), // Show current value
+                    options: const [
+                      ShadOption(value: false, child: Text('False')),
+                      ShadOption(value: true, child: Text('True')),
+                    ],
+                    selectedOptionBuilder: (context, value) =>
+                        Text(value.toString()),
+                    onChanged: (bool? value) {
+                      if (value != null) {
+                        setState(() => normalizeInput = value);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -2020,6 +2046,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                           formattedSkipLayers, // Pass formatted string or null
                       skipLayerStart: skipLayerStart,
                       skipLayerEnd: skipLayerEnd,
+                      normalizeInput: normalizeInput, // Pass the new value
                     );
                   },
                   child: const Text('Generate'),

@@ -608,7 +608,7 @@ class StableDiffusionProcessor {
                 controlCondPtr ?? nullptr, // Already passed
                 message['controlStrength'], // Already passed
                 styleStrength, // Already passed
-                false, // normalize_input (Already passed)
+                message['normalizeInput'], // Use the passed value
                 inputIdImagesPathUtf8, // Already passed
                 skipLayersPtr ?? nullptr, // New - Pass pointer or null
                 skipLayersCount, // New - Pass count
@@ -747,6 +747,7 @@ class StableDiffusionProcessor {
     String? skipLayersText, // New parameter (nullable string)
     double skipLayerStart = 0.01, // New parameter with default
     double skipLayerEnd = 0.2, // New parameter with default
+    bool normalizeInput = false, // Added normalizeInput parameter
   }) async {
     _loadingController.add(true); // Indicate loading starts
     try {
@@ -777,6 +778,7 @@ class StableDiffusionProcessor {
         'skipLayersText': skipLayersText, // New (pass the string)
         'skipLayerStart': skipLayerStart, // New
         'skipLayerEnd': skipLayerEnd, // New
+        'normalizeInput': normalizeInput, // Pass the new value
       });
     } catch (e) {
       print("Error sending generate command: $e");
