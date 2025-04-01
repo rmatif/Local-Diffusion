@@ -486,6 +486,8 @@ class StableDiffusionProcessor {
             Pointer<Utf8>? inputIdImagesPathUtf8;
             Pointer<SDImage>? controlCondPtr;
             Pointer<Uint8>? controlDataPtr;
+            Pointer<Int32>? skipLayersPtr; // Pointer for skip_layers array
+            int skipLayersCount = 0; // Count for skip_layers
 
             try {
               promptUtf8 = message['prompt'].toString().toNativeUtf8();
@@ -494,8 +496,44 @@ class StableDiffusionProcessor {
               inputIdImagesPathUtf8 =
                   message['inputIdImagesPath']?.toString().toNativeUtf8() ??
                       "".toNativeUtf8();
-              final styleStrength =
-                  message['styleStrength'] ?? 1.0; // Default style strength
+              final styleStrength = message['styleStrength'] ?? 1.0;
+
+              // --- Prepare skip_layers ---
+              final String? skipLayersText = message['skipLayersText'];
+              if (skipLayersText != null && skipLayersText.isNotEmpty) {
+                try {
+                  // Parse the string "[num1,num2,...]"
+                  final numbersString =
+                      skipLayersText.substring(1, skipLayersText.length - 1);
+                  final layerIndices = numbersString
+                      .split(',')
+                      .map((s) => int.parse(s.trim()))
+                      .toList();
+
+                  if (layerIndices.isNotEmpty) {
+                    skipLayersCount = layerIndices.length;
+                    skipLayersPtr = malloc<Int32>(skipLayersCount);
+                    for (int i = 0; i < skipLayersCount; i++) {
+                      skipLayersPtr[i] = layerIndices[i];
+                    }
+                    print(
+                        "Isolate: Parsed skip_layers: ${layerIndices.join(', ')} (Count: $skipLayersCount)");
+                  } else {
+                    skipLayersPtr =
+                        nullptr; // Ensure it's null if parsing results in empty list
+                  }
+                } catch (e) {
+                  print(
+                      "Isolate: Error parsing skip_layers '$skipLayersText': $e");
+                  skipLayersPtr = nullptr; // Set to null on error
+                  skipLayersCount = 0;
+                  // Optionally send an error back? For now, just log and proceed without skip_layers.
+                }
+              } else {
+                skipLayersPtr =
+                    nullptr; // Explicitly null if text is null or empty
+              }
+              // --- End Prepare skip_layers ---
 
               // Prepare control image data if provided
               if (message['controlImageData'] != null) {
@@ -521,27 +559,26 @@ class StableDiffusionProcessor {
                 ctx!,
                 promptUtf8,
                 negPromptUtf8,
-                message['clipSkip'],
-                message['cfgScale'],
-                message['guidance'],
-                0.0, // eta (new parameter, default 0.0)
-                message['width'],
-                message['height'],
-                message['sampleMethod'],
-                message['sampleSteps'],
-                message['seed'],
-                message['batchCount'],
-                controlCondPtr ?? nullptr, // Pass control condition or null
-                message['controlStrength'] ??
-                    0.9, // Pass control strength or default
-                styleStrength, // Pass style strength
-                false, // normalize_input
-                inputIdImagesPathUtf8, // input_id_images_path
-                nullptr, // skip_layers
-                0, // skip_layers_count
-                0.0, // slg_scale
-                0.0, // skip_layer_start
-                0.0, // skip_layer_end
+                message['clipSkip'], // Already passed
+                message['cfgScale'], // Already passed
+                message['guidance'], // New
+                message['eta'], // New
+                message['width'], // Already passed
+                message['height'], // Already passed
+                message['sampleMethod'], // Already passed
+                message['sampleSteps'], // Already passed
+                message['seed'], // Already passed
+                message['batchCount'], // Already passed
+                controlCondPtr ?? nullptr, // Already passed
+                message['controlStrength'], // Already passed
+                styleStrength, // Already passed
+                false, // normalize_input (Already passed)
+                inputIdImagesPathUtf8, // Already passed
+                skipLayersPtr ?? nullptr, // New - Pass pointer or null
+                skipLayersCount, // New - Pass count
+                message['slgScale'], // New
+                message['skipLayerStart'], // New
+                message['skipLayerEnd'], // New
               );
 
               print("Generation result address in isolate: ${result.address}");
@@ -615,15 +652,18 @@ class StableDiffusionProcessor {
               if (promptUtf8 != null) calloc.free(promptUtf8);
               if (negPromptUtf8 != null) calloc.free(negPromptUtf8);
               if (inputIdImagesPathUtf8 != null &&
-                  inputIdImagesPathUtf8.address != "".toNativeUtf8().address)
+                  inputIdImagesPathUtf8.address != "".toNativeUtf8().address) {
                 calloc.free(inputIdImagesPathUtf8); // Check against empty
+              }
               if (controlCondPtr != null) {
                 // Don't free controlCondPtr.ref.data here if it points to controlDataPtr
-                // calloc.free(controlCondPtr.ref.data); // This would be double free if data is from malloc
                 malloc.free(controlCondPtr); // Free the SDImage struct itself
               }
               if (controlDataPtr != null) {
                 malloc.free(controlDataPtr); // Free the image data buffer
+              }
+              if (skipLayersPtr != null && skipLayersPtr != nullptr) {
+                malloc.free(skipLayersPtr); // Free the skip_layers array
               }
             }
             break;
@@ -650,14 +690,15 @@ class StableDiffusionProcessor {
   Future<void> generateImage({
     required String prompt,
     String negativePrompt = "",
-    int clipSkip = 1,
+    int clipSkip = 0, // Default changed to 0 as per UI
     double cfgScale = 7.0,
-    double guidance = 1.0,
+    double guidance = 3.5, // Default changed as per UI
+    double eta = 0.0, // New parameter with default
     int width = 512,
     int height = 512,
-    int sampleMethod = 0, // Corresponds to SampleMethod enum index
+    int sampleMethod = 0,
     int sampleSteps = 20,
-    int seed = 42,
+    int seed = -1, // Default changed as per UI
     int batchCount = 1,
     String? inputIdImagesPath,
     double styleStrength = 1.0,
@@ -665,6 +706,10 @@ class StableDiffusionProcessor {
     int? controlImageWidth,
     int? controlImageHeight,
     double controlStrength = 0.9,
+    double slgScale = 0.0, // New parameter with default
+    String? skipLayersText, // New parameter (nullable string)
+    double skipLayerStart = 0.01, // New parameter with default
+    double skipLayerEnd = 0.2, // New parameter with default
   }) async {
     _loadingController.add(true); // Indicate loading starts
     try {
@@ -675,21 +720,26 @@ class StableDiffusionProcessor {
         'command': 'generate',
         'prompt': prompt,
         'negativePrompt': negativePrompt,
-        'clipSkip': clipSkip,
-        'cfgScale': cfgScale,
-        'guidance': guidance,
-        'width': width,
-        'height': height,
-        'sampleMethod': sampleMethod,
-        'sampleSteps': sampleSteps,
-        'seed': seed,
-        'batchCount': batchCount,
-        'inputIdImagesPath': inputIdImagesPath, // Pass null directly if null
-        'styleStrength': styleStrength,
-        'controlImageData': controlImageData,
-        'controlImageWidth': controlImageWidth,
-        'controlImageHeight': controlImageHeight,
-        'controlStrength': controlStrength,
+        'clipSkip': clipSkip, // Already passed
+        'cfgScale': cfgScale, // Already passed
+        'guidance': guidance, // New
+        'eta': eta, // New
+        'width': width, // Already passed
+        'height': height, // Already passed
+        'sampleMethod': sampleMethod, // Already passed
+        'sampleSteps': sampleSteps, // Already passed
+        'seed': seed, // Already passed
+        'batchCount': batchCount, // Already passed
+        'inputIdImagesPath': inputIdImagesPath, // Already passed
+        'styleStrength': styleStrength, // Already passed
+        'controlImageData': controlImageData, // Already passed
+        'controlImageWidth': controlImageWidth, // Already passed
+        'controlImageHeight': controlImageHeight, // Already passed
+        'controlStrength': controlStrength, // Already passed
+        'slgScale': slgScale, // New
+        'skipLayersText': skipLayersText, // New (pass the string)
+        'skipLayerStart': skipLayerStart, // New
+        'skipLayerEnd': skipLayerEnd, // New
       });
     } catch (e) {
       print("Error sending generate command: $e");

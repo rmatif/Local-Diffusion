@@ -70,7 +70,17 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   // UI State variables
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 0;
+  double clipSkip = 0; // Existing, used for new accordion
+  double eta = 0.0; // New state for eta slider
+  double guidance = 3.5; // New state for guidance slider
+  double slgScale = 0.0; // New state for slg-scale slider
+  String skipLayersText = ''; // New state for skip-layers text field
+  double skipLayerStart = 0.01; // New state for skip-layer-start slider
+  double skipLayerEnd = 0.2; // New state for skip-layer-end slider
+  final TextEditingController _skipLayersController =
+      TextEditingController(); // Controller for skip-layers input
+  String? _skipLayersErrorText; // Error text for skip-layers validation
+
   bool useVAE = false;
   String samplingMethod = 'euler_a';
   double cfg = 7;
@@ -92,7 +102,6 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
   bool _isDiffusionModelType = false; // Added state for the new switch
-
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
     setState(() {
@@ -182,7 +191,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     _loadingErrorTimer?.cancel(); // Cancel the general loading error timer
     _processor?.dispose();
     _cannyProcessor?.dispose();
-    _promptController.dispose(); // Dispose the text controller
+    _promptController.dispose();
+    _skipLayersController.dispose(); // Dispose the new controller
     super.dispose();
   }
 
@@ -280,14 +290,16 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       t5xxlPath: _t5xxlPath,
       vaePath: _vaePath,
       embedDirPath: _embedDirPath,
-      clipSkip: clipSkip.toInt(),
-      vaeTiling: useVAETiling,
-      controlNetPath: _controlNetPath, // Add this
-      controlImageData: _controlRgbBytes, // Add this
-      controlImageWidth: _controlWidth, // Add this
-      controlImageHeight: _controlHeight, // Add this // Add this
-      controlStrength: controlStrength, // Add this
-      isDiffusionModelType: _isDiffusionModelType, // Pass the state variable
+      clipSkip: clipSkip.toInt(), // Passed from state
+      vaeTiling: useVAETiling, // Passed from state
+      controlNetPath: _controlNetPath,
+      controlImageData: _controlRgbBytes,
+      controlImageWidth: _controlWidth,
+      controlImageHeight: _controlHeight,
+      controlStrength: controlStrength,
+      isDiffusionModelType: _isDiffusionModelType,
+      // Note: Other new params (eta, guidance, etc.) are generation-time only
+      // and don't need to be passed during initialization via newSdCtx.
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -2090,41 +2102,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 16),
-                        ShadCheckbox(
-                          value: useVAETiling,
-                          onChanged: (isModelLoading || isGenerating)
-                              ? null
-                              : (bool v) {
-                                  if (useTAESD) {
-                                    _showTemporaryError(
-                                        'VAE Tiling is incompatible with TAESD');
-                                    return;
-                                  }
-
-                                  setState(() {
-                                    useVAETiling = v;
-                                    if (_processor != null) {
-                                      String currentModelPath =
-                                          _processor!.modelPath;
-                                      bool currentFlashAttention =
-                                          _processor!.useFlashAttention;
-                                      SDType currentModelType =
-                                          _processor!.modelType;
-                                      Schedule currentSchedule =
-                                          _processor!.schedule;
-
-                                      _initializeProcessor(
-                                        currentModelPath,
-                                        currentFlashAttention,
-                                        currentModelType,
-                                        currentSchedule,
-                                      );
-                                    }
-                                  });
-                                },
-                          label: const Text('VAE Tiling'),
-                        ),
+                        // VAE Tiling checkbox moved to the new accordion below
                       ],
                     ),
                   ),
@@ -2145,7 +2123,227 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   setState(() => negativePrompt = v ?? ''),
             ),
             const SizedBox(height: 16),
-            // Accordion removed from here
+
+            // --- New Advanced Sampling Options Accordion ---
+            ShadAccordion<Map<String, dynamic>>(
+              children: [
+                ShadAccordionItem<Map<String, dynamic>>(
+                  value: const {}, // Unique value for this item
+                  title: const Text('Advanced Sampling Options'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Moved VAE Tiling Checkbox
+                        ShadCheckbox(
+                          value: useVAETiling,
+                          onChanged: (isModelLoading || isGenerating)
+                              ? null
+                              : (bool v) {
+                                  if (useTAESD && v) {
+                                    _showTemporaryError(
+                                        'VAE Tiling is incompatible with TAESD');
+                                    return;
+                                  }
+                                  setState(() {
+                                    useVAETiling = v;
+                                    // Reinitialize processor if needed (already handled in original code)
+                                    if (_processor != null) {
+                                      String currentModelPath =
+                                          _processor!.modelPath;
+                                      bool currentFlashAttention =
+                                          _processor!.useFlashAttention;
+                                      SDType currentModelType =
+                                          _processor!.modelType;
+                                      Schedule currentSchedule =
+                                          _processor!.schedule;
+                                      _initializeProcessor(
+                                        currentModelPath,
+                                        currentFlashAttention,
+                                        currentModelType,
+                                        currentSchedule,
+                                      );
+                                    }
+                                  });
+                                },
+                          label: const Text('VAE Tiling'),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Clip Skip Slider
+                        Row(
+                          children: [
+                            const Text('Clip Skip'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: clipSkip,
+                                min: 0,
+                                max: 2,
+                                divisions: 2,
+                                onChanged: (v) => setState(() => clipSkip = v),
+                              ),
+                            ),
+                            Text(clipSkip.toInt().toString()),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Eta Slider
+                        Row(
+                          children: [
+                            const Text('Eta'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: eta,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 20, // 1.0 / 0.05 = 20
+                                onChanged: (v) => setState(() => eta = v),
+                              ),
+                            ),
+                            Text(eta.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Guidance Slider
+                        Row(
+                          children: [
+                            const Text('Guidance'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: guidance,
+                                min: 0.0,
+                                max: 40.0,
+                                divisions: 800, // 40.0 / 0.05 = 800
+                                onChanged: (v) => setState(() => guidance = v),
+                              ),
+                            ),
+                            Text(guidance.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // SLG Scale Slider
+                        Row(
+                          children: [
+                            const Text('SLG Scale'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: slgScale,
+                                min: 0.0,
+                                max: 7.0,
+                                divisions: 140, // 7.0 / 0.05 = 140
+                                onChanged: (v) => setState(() => slgScale = v),
+                              ),
+                            ),
+                            Text(slgScale.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layers Text Field
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ShadInput(
+                              controller: _skipLayersController,
+                              placeholder:
+                                  const Text('Skip Layers (e.g., 7,8,9)'),
+                              keyboardType: TextInputType.text,
+                              // Removed errorText, handled below
+                              onChanged: (String? v) {
+                                final text = v ?? '';
+                                // Basic validation: allow empty, or numbers separated by commas
+                                final regex = RegExp(r'^(?:\d+(?:,\s*\d+)*)?$');
+                                if (text.isEmpty || regex.hasMatch(text)) {
+                                  setState(() {
+                                    skipLayersText = text;
+                                    _skipLayersErrorText = null; // Clear error
+                                  });
+                                } else {
+                                  setState(() {
+                                    // Keep skipLayersText as is, but show error
+                                    _skipLayersErrorText =
+                                        'Invalid format (use numbers separated by commas)';
+                                  });
+                                }
+                              },
+                            ),
+                            if (_skipLayersErrorText != null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(top: 4.0, left: 2.0),
+                                child: Text(
+                                  _skipLayersErrorText!,
+                                  style: theme.textTheme.p.copyWith(
+                                    color: Colors.red,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layer Start Slider
+                        Row(
+                          children: [
+                            const Text('Skip Layer Start'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: skipLayerStart,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 100, // 1.0 / 0.01 = 100
+                                onChanged: (v) {
+                                  if (v < skipLayerEnd) {
+                                    setState(() => skipLayerStart = v);
+                                  }
+                                },
+                              ),
+                            ),
+                            Text(skipLayerStart.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layer End Slider
+                        Row(
+                          children: [
+                            const Text('Skip Layer End'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: skipLayerEnd,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 100, // 1.0 / 0.01 = 100
+                                onChanged: (v) {
+                                  if (v > skipLayerStart) {
+                                    setState(() => skipLayerEnd = v);
+                                  }
+                                },
+                              ),
+                            ),
+                            Text(skipLayerEnd.toStringAsFixed(2)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            // --- End New Accordion ---
+
+            const SizedBox(height: 16),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -2732,31 +2930,24 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                           false; // Hide log button until generation finishes
                     });
 
-                    // --- Control Image Processing Logic ---
+                    // --- Control Image Processing Logic (Existing) ---
                     Uint8List? finalControlBytes = _controlRgbBytes;
                     int? finalControlWidth = _controlWidth;
                     int? finalControlHeight = _controlHeight;
-
-                    // Determine the source image data (Canny or original control image)
                     Uint8List? sourceBytes;
                     int? sourceWidth;
                     int? sourceHeight;
-
                     if (useControlNet && useControlImage) {
                       if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
-                        // Use Canny result if available and Canny is enabled
                         sourceBytes = _cannyProcessor!.resultRgbBytes!;
                         sourceWidth = _cannyProcessor!.resultWidth!;
                         sourceHeight = _cannyProcessor!.resultHeight!;
-                        // Ensure Canny result is RGB
                         sourceBytes = _ensureRgbFormat(
                             sourceBytes, sourceWidth, sourceHeight);
                       } else if (_controlRgbBytes != null) {
-                        // Use original control image if Canny is not used or failed
                         sourceBytes = _controlRgbBytes;
                         sourceWidth = _controlWidth;
                         sourceHeight = _controlHeight;
-                        // Ensure original control image is RGB (already done on load, but double-check)
                         if (sourceBytes != null &&
                             sourceWidth != null &&
                             sourceHeight != null) {
@@ -2765,11 +2956,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                         }
                       }
                     }
-
                     if (sourceBytes != null &&
                         sourceWidth != null &&
                         sourceHeight != null) {
-                      // Check if dimensions match the target output size
                       if (sourceWidth != width || sourceHeight != height) {
                         try {
                           print(
@@ -2779,7 +2968,6 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                             processedData = cropImage(sourceBytes, sourceWidth,
                                 sourceHeight, width, height);
                           } else {
-                            // Default to Resize
                             processedData = resizeImage(sourceBytes,
                                 sourceWidth, sourceHeight, width, height);
                           }
@@ -2790,34 +2978,46 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                               'Control image processed to $finalControlWidth x $finalControlHeight.');
                         } catch (e) {
                           print("Error processing control image: $e");
-                          // Optionally show an error to the user
                           _showTemporaryError(
                               'Error processing control image: $e');
-                          setState(
-                              () => isGenerating = false); // Stop generation
-                          return; // Prevent calling generateImage
+                          setState(() => isGenerating = false);
+                          return;
                         }
                       } else {
-                        // Dimensions already match, use the source directly
                         finalControlBytes = sourceBytes;
                         finalControlWidth = sourceWidth;
                         finalControlHeight = sourceHeight;
                       }
                     } else {
-                      // No valid source image, ensure control params are null
                       finalControlBytes = null;
                       finalControlWidth = null;
                       finalControlHeight = null;
                     }
                     // --- End Control Image Processing Logic ---
 
+                    // --- Skip Layers Formatting ---
+                    String? formattedSkipLayers;
+                    if (_skipLayersErrorText == null &&
+                        skipLayersText.trim().isNotEmpty) {
+                      // Remove whitespace and format as "[num1,num2,...]"
+                      final numbers = skipLayersText
+                          .split(',')
+                          .map((s) => s.trim())
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                      if (numbers.isNotEmpty) {
+                        formattedSkipLayers = '[${numbers.join(',')}]';
+                      }
+                    }
+                    // --- End Skip Layers Formatting ---
+
                     _processor!.generateImage(
                       prompt: prompt,
                       negativePrompt: negativePrompt,
                       cfgScale: cfg,
                       sampleSteps: steps,
-                      width: width, // Target width
-                      height: height, // Target height
+                      width: width,
+                      height: height,
                       seed: int.tryParse(seed) ?? -1,
                       sampleMethod: SampleMethod.values
                           .firstWhere(
@@ -2827,12 +3027,19 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                             orElse: () => SampleMethod.EULER_A,
                           )
                           .index,
-                      controlImageData:
-                          finalControlBytes, // Use processed bytes
-                      controlImageWidth:
-                          finalControlWidth, // Use processed width
-                      controlImageHeight:
-                          finalControlHeight, // Use processed height
+                      // Pass new parameters
+                      clipSkip: clipSkip.toInt(),
+                      eta: eta,
+                      guidance: guidance,
+                      slgScale: slgScale,
+                      skipLayersText:
+                          formattedSkipLayers, // Pass formatted string or null
+                      skipLayerStart: skipLayerStart,
+                      skipLayerEnd: skipLayerEnd,
+                      // Existing control parameters
+                      controlImageData: finalControlBytes,
+                      controlImageWidth: finalControlWidth,
+                      controlImageHeight: finalControlHeight,
                       controlStrength: controlStrength,
                     );
                   },

@@ -100,7 +100,7 @@ class _InpaintingPageState extends State<InpaintingPage>
   final Map<String, GlobalKey> _loraKeys = {};
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 1.0;
+  double clipSkip = 0.0; // Default changed to 0.0
   bool useVAE = false;
   String samplingMethod = 'euler_a';
   double cfg = 7;
@@ -130,6 +130,18 @@ class _InpaintingPageState extends State<InpaintingPage>
   bool _showLogsButton = false; // To control visibility of the log button
   bool _isDiffusionModelType =
       false; // Added state for the standalone model switch
+
+  // --- State for Advanced Sampling Options (copied from img2img_page.dart) ---
+  double eta = 0.0; // New state for eta slider
+  double guidance = 3.5; // Default to match main.dart
+  double slgScale = 0.0; // New state for slg-scale slider
+  String skipLayersText = ''; // New state for skip-layers text field
+  double skipLayerStart = 0.01; // New state for skip-layer-start slider
+  double skipLayerEnd = 0.2; // New state for skip-layer-end slider
+  final TextEditingController _skipLayersController =
+      TextEditingController(); // Controller for skip-layers input
+  String? _skipLayersErrorText; // Error text for skip-layers validation
+  // --- End State for Advanced Sampling Options ---
 
   // State for cropped image and mask - These are no longer needed as persistent state
   // CroppedImageData? _croppedImageData; // Removed
@@ -230,6 +242,7 @@ class _InpaintingPageState extends State<InpaintingPage>
     _processor = null;
     _cannyProcessor?.dispose();
     _promptController.dispose(); // Dispose text controller
+    _skipLayersController.dispose(); // Dispose the new controller
     super.dispose();
   }
 
@@ -2448,33 +2461,7 @@ class _InpaintingPageState extends State<InpaintingPage>
                           ],
                         ),
                         const SizedBox(height: 8),
-                        ShadCheckbox(
-                          value: useVAETiling,
-                          onChanged: (bool v) {
-                            if (useTAESD) {
-                              _showTemporaryError(
-                                  'VAE Tiling is incompatible with TAESD');
-                              return;
-                            }
-                            setState(() {
-                              useVAETiling = v;
-                              if (_processor != null) {
-                                String currentModelPath = _processor!.modelPath;
-                                bool currentFlashAttention =
-                                    _processor!.useFlashAttention;
-                                SDType currentModelType = _processor!.modelType;
-                                Schedule currentSchedule = _processor!.schedule;
-                                _initializeProcessor(
-                                  currentModelPath,
-                                  currentFlashAttention,
-                                  currentModelType,
-                                  currentSchedule,
-                                );
-                              }
-                            });
-                          },
-                          label: const Text('VAE Tiling'),
-                        ),
+                        // VAE Tiling checkbox removed from here, moved to Advanced Sampling Options
                         // --- PASTED CONTENT END ---
 
                         // Removed duplicate Standalone Model Switch
@@ -2498,6 +2485,224 @@ class _InpaintingPageState extends State<InpaintingPage>
               onChanged: (String? v) =>
                   setState(() => negativePrompt = v ?? ''),
             ),
+            const SizedBox(height: 16),
+
+            // --- New Advanced Sampling Options Accordion (Copied from img2img_page.dart) ---
+            ShadAccordion<Map<String, dynamic>>(
+              children: [
+                ShadAccordionItem<Map<String, dynamic>>(
+                  value: const {}, // Unique value for this item
+                  title: const Text('Advanced Sampling Options'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Moved VAE Tiling Checkbox
+                        ShadCheckbox(
+                          value: useVAETiling,
+                          onChanged: (isModelLoading || isGenerating)
+                              ? null
+                              : (bool v) {
+                                  if (useTAESD && v) {
+                                    _showTemporaryError(
+                                        'VAE Tiling is incompatible with TAESD');
+                                    return;
+                                  }
+                                  setState(() {
+                                    useVAETiling = v;
+                                    // Reinitialize processor if needed
+                                    if (_processor != null) {
+                                      String currentModelPath =
+                                          _processor!.modelPath;
+                                      bool currentFlashAttention =
+                                          _processor!.useFlashAttention;
+                                      SDType currentModelType =
+                                          _processor!.modelType;
+                                      Schedule currentSchedule =
+                                          _processor!.schedule;
+                                      _initializeProcessor(
+                                        currentModelPath,
+                                        currentFlashAttention,
+                                        currentModelType,
+                                        currentSchedule,
+                                      );
+                                    }
+                                  });
+                                },
+                          label: const Text('VAE Tiling'),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Clip Skip Slider
+                        Row(
+                          children: [
+                            const Text('Clip Skip'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: clipSkip,
+                                min: 0,
+                                max: 2, // Adjust max if needed
+                                divisions: 2,
+                                onChanged: (v) => setState(() => clipSkip = v),
+                              ),
+                            ),
+                            Text(clipSkip.toInt().toString()),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Eta Slider
+                        Row(
+                          children: [
+                            const Text('Eta'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: eta,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 20, // 1.0 / 0.05 = 20
+                                onChanged: (v) => setState(() => eta = v),
+                              ),
+                            ),
+                            Text(eta.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Guidance Slider
+                        Row(
+                          children: [
+                            const Text('Guidance'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: guidance,
+                                min: 0.0,
+                                max: 40.0, // Adjust max if needed
+                                divisions: 800, // 40.0 / 0.05 = 800
+                                onChanged: (v) => setState(() => guidance = v),
+                              ),
+                            ),
+                            Text(guidance.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // SLG Scale Slider
+                        Row(
+                          children: [
+                            const Text('SLG Scale'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: slgScale,
+                                min: 0.0,
+                                max: 7.0, // Adjust max if needed
+                                divisions: 140, // 7.0 / 0.05 = 140
+                                onChanged: (v) => setState(() => slgScale = v),
+                              ),
+                            ),
+                            Text(slgScale.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layers Text Field
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ShadInput(
+                              controller: _skipLayersController,
+                              placeholder:
+                                  const Text('Skip Layers (e.g., 7,8,9)'),
+                              keyboardType: TextInputType.text,
+                              onChanged: (String? v) {
+                                final text = v ?? '';
+                                final regex = RegExp(r'^(?:\d+(?:,\s*\d+)*)?$');
+                                if (text.isEmpty || regex.hasMatch(text)) {
+                                  setState(() {
+                                    skipLayersText = text;
+                                    _skipLayersErrorText = null; // Clear error
+                                  });
+                                } else {
+                                  setState(() {
+                                    _skipLayersErrorText =
+                                        'Invalid format (use numbers separated by commas)';
+                                  });
+                                }
+                              },
+                            ),
+                            if (_skipLayersErrorText != null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(top: 4.0, left: 2.0),
+                                child: Text(
+                                  _skipLayersErrorText!,
+                                  style: theme.textTheme.p.copyWith(
+                                    color: Colors.red,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layer Start Slider
+                        Row(
+                          children: [
+                            const Text('Skip Layer Start'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: skipLayerStart,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 100, // 1.0 / 0.01 = 100
+                                onChanged: (v) {
+                                  if (v < skipLayerEnd) {
+                                    setState(() => skipLayerStart = v);
+                                  }
+                                },
+                              ),
+                            ),
+                            Text(skipLayerStart.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layer End Slider
+                        Row(
+                          children: [
+                            const Text('Skip Layer End'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: skipLayerEnd,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 100, // 1.0 / 0.01 = 100
+                                onChanged: (v) {
+                                  if (v > skipLayerStart) {
+                                    setState(() => skipLayerEnd = v);
+                                  }
+                                },
+                              ),
+                            ),
+                            Text(skipLayerEnd.toStringAsFixed(2)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            // --- End New Accordion ---
+
             const SizedBox(height: 16),
             const SizedBox(height: 16),
             Row(
@@ -3209,6 +3414,21 @@ class _InpaintingPageState extends State<InpaintingPage>
                     }
                     // --- End Control Image Processing Logic ---
 
+                    // --- Skip Layers Formatting ---
+                    String? formattedSkipLayers;
+                    if (_skipLayersErrorText == null &&
+                        skipLayersText.trim().isNotEmpty) {
+                      final numbers = skipLayersText
+                          .split(',')
+                          .map((s) => s.trim())
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                      if (numbers.isNotEmpty) {
+                        formattedSkipLayers = '[${numbers.join(',')}]';
+                      }
+                    }
+                    // --- End Skip Layers Formatting ---
+
                     _processor!.generateImg2Img(
                       inputImageData: effectiveImageData, // Use effective data
                       inputWidth: effectiveWidth, // Use effective width
@@ -3221,9 +3441,10 @@ class _InpaintingPageState extends State<InpaintingPage>
                           effectiveHeight, // Output should match effective input
                       prompt: prompt,
                       negativePrompt: negativePrompt,
-                      clipSkip: clipSkip.toInt(),
-                      cfgScale: cfg,
-                      sampleSteps: steps,
+                      clipSkip: clipSkip.toInt(), // Already passed
+                      cfgScale: cfg, // Already passed
+                      guidance: guidance, // New
+                      eta: eta, // New
                       sampleMethod: SampleMethod.values
                           .firstWhere(
                             (method) =>
@@ -3231,17 +3452,23 @@ class _InpaintingPageState extends State<InpaintingPage>
                                 samplingMethod.toLowerCase(),
                             orElse: () => SampleMethod.EULER_A,
                           )
-                          .index,
-                      strength: strength,
-                      seed: int.tryParse(seed) ?? -1,
-                      batchCount: 1,
+                          .index, // Already passed
+                      sampleSteps: steps, // Already passed
+                      strength: strength, // Already passed
+                      seed: int.tryParse(seed) ?? -1, // Already passed
+                      batchCount: 1, // Already passed
                       controlImageData:
-                          finalControlBytes, // Use processed bytes
+                          finalControlBytes, // Use processed bytes (Already passed)
                       controlImageWidth:
-                          finalControlWidth, // Use processed width
+                          finalControlWidth, // Use processed width (Already passed)
                       controlImageHeight:
-                          finalControlHeight, // Use processed height
-                      controlStrength: controlStrength,
+                          finalControlHeight, // Use processed height (Already passed)
+                      controlStrength: controlStrength, // Already passed
+                      // New sampling parameters
+                      slgScale: slgScale,
+                      skipLayersText: formattedSkipLayers,
+                      skipLayerStart: skipLayerStart,
+                      skipLayerEnd: skipLayerEnd,
                       // Use the final processed mask data (potentially inverted)
                       maskImageData: finalMaskData,
                       // Use effective dimensions for the mask

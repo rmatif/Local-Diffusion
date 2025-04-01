@@ -49,7 +49,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   final Map<String, GlobalKey> _loraKeys = {};
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 1.0;
+  double clipSkip = 0.0; // Default from main.dart
   bool useVAE = false;
   String samplingMethod = 'euler_a';
   double cfg = 7;
@@ -75,6 +75,16 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   double styleStrength = 50.0;
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
+  // --- Added state variables from main.dart for Advanced Sampling Options ---
+  double eta = 0.0;
+  double guidance = 3.5;
+  double slgScale = 0.0;
+  String skipLayersText = '';
+  double skipLayerStart = 0.01;
+  double skipLayerEnd = 0.2;
+  final TextEditingController _skipLayersController = TextEditingController();
+  String? _skipLayersErrorText;
+  // --- End added state variables ---
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -128,6 +138,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
     _loadingErrorTimer?.cancel(); // Cancel the general loading error timer
     _processor?.dispose();
     _promptController.dispose(); // Dispose text controller
+    _skipLayersController.dispose(); // Dispose new controller
     super.dispose();
   }
 
@@ -1161,24 +1172,12 @@ class _PhotomakerPageState extends State<PhotomakerPage>
               ),
             ),
             const SizedBox(height: 16),
-            ShadInput(
-              key: _promptFieldKey,
-              placeholder: const Text('Prompt'),
-              controller: _promptController,
-              onChanged: (String? v) => setState(() => prompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-            ShadInput(
-              placeholder: const Text('Negative Prompt'),
-              onChanged: (String? v) =>
-                  setState(() => negativePrompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
+            // --- Moved Advanced Model Options Accordion ---
             ShadAccordion<Map<String, dynamic>>(
               children: [
                 ShadAccordionItem<Map<String, dynamic>>(
                   value: const {},
-                  title: const Text('Advanced Options'),
+                  title: const Text('Advanced Model Options'), // Renamed title
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
@@ -1566,33 +1565,238 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        // VAE Tiling removed from here
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // --- End Moved Accordion ---
+            ShadInput(
+              key: _promptFieldKey,
+              placeholder: const Text('Prompt'),
+              controller: _promptController,
+              onChanged: (String? v) => setState(() => prompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Negative Prompt'),
+              onChanged: (String? v) =>
+                  setState(() => negativePrompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            // --- New Advanced Sampling Options Accordion ---
+            ShadAccordion<Map<String, dynamic>>(
+              children: [
+                ShadAccordionItem<Map<String, dynamic>>(
+                  value: const {}, // Unique value for this item
+                  title: const Text('Advanced Sampling Options'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Moved VAE Tiling Checkbox
                         ShadCheckbox(
                           value: useVAETiling,
-                          onChanged: (bool v) {
-                            if (useTAESD) {
-                              _showTemporaryError(
-                                  'VAE Tiling is incompatible with TAESD');
-                              return;
-                            }
-                            setState(() {
-                              useVAETiling = v;
-                              if (_processor != null) {
-                                String currentModelPath = _processor!.modelPath;
-                                bool currentFlashAttention =
-                                    _processor!.useFlashAttention;
-                                SDType currentModelType = _processor!.modelType;
-                                Schedule currentSchedule = _processor!.schedule;
-                                _initializeProcessor(
-                                  currentModelPath,
-                                  currentFlashAttention,
-                                  currentModelType,
-                                  currentSchedule,
-                                );
-                              }
-                            });
-                          },
+                          onChanged: (isModelLoading || isGenerating)
+                              ? null
+                              : (bool v) {
+                                  if (useTAESD && v) {
+                                    _showTemporaryError(
+                                        'VAE Tiling is incompatible with TAESD');
+                                    return;
+                                  }
+                                  setState(() {
+                                    useVAETiling = v;
+                                    // Reinitialize processor if needed
+                                    if (_processor != null) {
+                                      String currentModelPath =
+                                          _processor!.modelPath;
+                                      bool currentFlashAttention =
+                                          _processor!.useFlashAttention;
+                                      SDType currentModelType =
+                                          _processor!.modelType;
+                                      Schedule currentSchedule =
+                                          _processor!.schedule;
+                                      _initializeProcessor(
+                                        currentModelPath,
+                                        currentFlashAttention,
+                                        currentModelType,
+                                        currentSchedule,
+                                      );
+                                    }
+                                  });
+                                },
                           label: const Text('VAE Tiling'),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Clip Skip Slider
+                        Row(
+                          children: [
+                            const Text('Clip Skip'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: clipSkip,
+                                min: 0,
+                                max: 2,
+                                divisions: 2,
+                                onChanged: (v) => setState(() => clipSkip = v),
+                              ),
+                            ),
+                            Text(clipSkip.toInt().toString()),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Eta Slider
+                        Row(
+                          children: [
+                            const Text('Eta'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: eta,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 20, // 1.0 / 0.05 = 20
+                                onChanged: (v) => setState(() => eta = v),
+                              ),
+                            ),
+                            Text(eta.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Guidance Slider
+                        Row(
+                          children: [
+                            const Text('Guidance'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: guidance,
+                                min: 0.0,
+                                max: 40.0,
+                                divisions: 800, // 40.0 / 0.05 = 800
+                                onChanged: (v) => setState(() => guidance = v),
+                              ),
+                            ),
+                            Text(guidance.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // SLG Scale Slider
+                        Row(
+                          children: [
+                            const Text('SLG Scale'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: slgScale,
+                                min: 0.0,
+                                max: 7.0,
+                                divisions: 140, // 7.0 / 0.05 = 140
+                                onChanged: (v) => setState(() => slgScale = v),
+                              ),
+                            ),
+                            Text(slgScale.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layers Text Field
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ShadInput(
+                              controller: _skipLayersController,
+                              placeholder:
+                                  const Text('Skip Layers (e.g., 7,8,9)'),
+                              keyboardType: TextInputType.text,
+                              // Removed errorText, handled below
+                              onChanged: (String? v) {
+                                final text = v ?? '';
+                                // Basic validation: allow empty, or numbers separated by commas
+                                final regex = RegExp(r'^(?:\d+(?:,\s*\d+)*)?$');
+                                if (text.isEmpty || regex.hasMatch(text)) {
+                                  setState(() {
+                                    skipLayersText = text;
+                                    _skipLayersErrorText = null; // Clear error
+                                  });
+                                } else {
+                                  setState(() {
+                                    // Keep skipLayersText as is, but show error
+                                    _skipLayersErrorText =
+                                        'Invalid format (use numbers separated by commas)';
+                                  });
+                                }
+                              },
+                            ),
+                            if (_skipLayersErrorText != null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(top: 4.0, left: 2.0),
+                                child: Text(
+                                  _skipLayersErrorText!,
+                                  style: theme.textTheme.p.copyWith(
+                                    color: Colors.red,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layer Start Slider
+                        Row(
+                          children: [
+                            const Text('Skip Layer Start'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: skipLayerStart,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 100, // 1.0 / 0.01 = 100
+                                onChanged: (v) {
+                                  if (v < skipLayerEnd) {
+                                    setState(() => skipLayerStart = v);
+                                  }
+                                },
+                              ),
+                            ),
+                            Text(skipLayerStart.toStringAsFixed(2)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Skip Layer End Slider
+                        Row(
+                          children: [
+                            const Text('Skip Layer End'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ShadSlider(
+                                initialValue: skipLayerEnd,
+                                min: 0.0,
+                                max: 1.0,
+                                divisions: 100, // 1.0 / 0.01 = 100
+                                onChanged: (v) {
+                                  if (v > skipLayerStart) {
+                                    setState(() => skipLayerEnd = v);
+                                  }
+                                },
+                              ),
+                            ),
+                            Text(skipLayerEnd.toStringAsFixed(2)),
+                          ],
                         ),
                       ],
                     ),
@@ -1600,6 +1804,9 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                 ),
               ],
             ),
+            // --- End New Accordion ---
+            const SizedBox(height: 16),
+            // This accordion was moved above the prompt field
             const SizedBox(height: 16),
             Row(
               children: [
@@ -1764,6 +1971,22 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                       await file.copy('${tempFolder.path}/${image.name}');
                     }
 
+                    // --- Skip Layers Formatting ---
+                    String? formattedSkipLayers;
+                    if (_skipLayersErrorText == null &&
+                        skipLayersText.trim().isNotEmpty) {
+                      // Remove whitespace and format as "[num1,num2,...]"
+                      final numbers = skipLayersText
+                          .split(',')
+                          .map((s) => s.trim())
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                      if (numbers.isNotEmpty) {
+                        formattedSkipLayers = '[${numbers.join(',')}]';
+                      }
+                    }
+                    // --- End Skip Layers Formatting ---
+
                     _processor!.generateImage(
                       prompt: prompt,
                       negativePrompt: negativePrompt,
@@ -1782,6 +2005,15 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                           .index,
                       inputIdImagesPath: tempFolder.path,
                       styleStrength: styleStrength / 100.0,
+                      // Pass new sampling parameters
+                      clipSkip: clipSkip.toInt(),
+                      eta: eta,
+                      guidance: guidance,
+                      slgScale: slgScale,
+                      skipLayersText:
+                          formattedSkipLayers, // Pass formatted string or null
+                      skipLayerStart: skipLayerStart,
+                      skipLayerEnd: skipLayerEnd,
                     );
                   },
                   child: const Text('Generate'),

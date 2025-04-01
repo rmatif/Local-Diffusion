@@ -490,9 +490,49 @@ class Img2ImgProcessor {
                   controlCondPtr.ref
                     ..width = controlWidth
                     ..height = controlHeight
-                    ..channel = 3
+                    ..channel = 3 // Assuming RGB for control image
                     ..data = controlDataPtr!; // Add null check
                 }
+
+                // --- Prepare skip_layers (Copied from stable_diffusion_processor) ---
+                Pointer<Int32>? skipLayersPtr; // Pointer for skip_layers array
+                int skipLayersCount = 0; // Count for skip_layers
+                final String? skipLayersText = message['skipLayersText'];
+                if (skipLayersText != null && skipLayersText.isNotEmpty) {
+                  try {
+                    // Parse the string "[num1,num2,...]" or "num1,num2,..."
+                    String numbersString = skipLayersText;
+                    if (numbersString.startsWith('[') &&
+                        numbersString.endsWith(']')) {
+                      numbersString =
+                          numbersString.substring(1, numbersString.length - 1);
+                    }
+                    final layerIndices = numbersString
+                        .split(',')
+                        .map((s) => int.parse(s.trim()))
+                        .toList();
+
+                    if (layerIndices.isNotEmpty) {
+                      skipLayersCount = layerIndices.length;
+                      skipLayersPtr = malloc<Int32>(skipLayersCount);
+                      for (int i = 0; i < skipLayersCount; i++) {
+                        skipLayersPtr[i] = layerIndices[i];
+                      }
+                      print(
+                          "Isolate (Img2Img): Parsed skip_layers: ${layerIndices.join(', ')} (Count: $skipLayersCount)");
+                    } else {
+                      skipLayersPtr = nullptr;
+                    }
+                  } catch (e) {
+                    print(
+                        "Isolate (Img2Img): Error parsing skip_layers '$skipLayersText': $e");
+                    skipLayersPtr = nullptr;
+                    skipLayersCount = 0;
+                  }
+                } else {
+                  skipLayersPtr = nullptr;
+                }
+                // --- End Prepare skip_layers ---
 
                 Pointer<SDImage> maskImage;
                 if (message['maskImageData'] != null) {
@@ -536,26 +576,26 @@ class Img2ImgProcessor {
                   promptUtf8,
                   negPromptUtf8,
                   message['clipSkip'],
-                  message['cfgScale'],
-                  message['guidance'],
-                  0.0, // Added eta parameter
-                  outputWidth,
-                  outputHeight,
-                  message['sampleMethod'],
-                  message['sampleSteps'],
-                  message['strength'],
-                  message['seed'],
-                  message['batchCount'],
-                  controlCondPtr ?? nullptr,
-                  message['controlStrength'] ?? 0.0,
-                  0.0, // style_strength
-                  false, // normalize_input
-                  emptyUtf8, // input_id_images_path
-                  nullptr, // skip_layers
-                  0, // skip_layers_count
-                  0.0, // slg_scale
-                  0.0, // skip_layer_start
-                  0.0, // skip_layer_end
+                  message['cfgScale'], // Already passed
+                  message['guidance'], // New
+                  message['eta'], // New
+                  outputWidth, // Already passed
+                  outputHeight, // Already passed
+                  message['sampleMethod'], // Already passed
+                  message['sampleSteps'], // Already passed
+                  message['strength'], // Already passed
+                  message['seed'], // Already passed
+                  message['batchCount'], // Already passed
+                  controlCondPtr ?? nullptr, // Already passed
+                  message['controlStrength'] ?? 0.0, // Already passed
+                  0.0, // style_strength (Not exposed in UI yet)
+                  false, // normalize_input (Already passed)
+                  emptyUtf8, // input_id_images_path (Not exposed in UI yet)
+                  skipLayersPtr ?? nullptr, // New - Pass pointer or null
+                  skipLayersCount, // New - Pass count
+                  message['slgScale'], // New
+                  message['skipLayerStart'], // New
+                  message['skipLayerEnd'], // New
                 );
 
                 calloc.free(initImageDataPtr);
@@ -565,6 +605,10 @@ class Img2ImgProcessor {
                 calloc.free(promptUtf8);
                 calloc.free(negPromptUtf8);
                 calloc.free(emptyUtf8);
+                // Free skip_layers pointer if allocated
+                if (skipLayersPtr != null && skipLayersPtr != nullptr) {
+                  malloc.free(skipLayersPtr);
+                }
 
                 print("Generation result address: ${result.address}");
 
@@ -666,20 +710,25 @@ class Img2ImgProcessor {
     String negativePrompt = "",
     int clipSkip = 1,
     double cfgScale = 7.0,
-    double guidance = 1.0,
-    double eta = 0.0, // Added eta parameter
-    int sampleMethod = 0,
-    int sampleSteps = 20,
-    double strength = 0.5,
-    int seed = 42,
-    int batchCount = 1,
-    Uint8List? controlImageData,
-    int? controlImageWidth,
-    int? controlImageHeight,
-    double controlStrength = 0.9,
-    Uint8List? maskImageData, // Add this
-    int? maskWidth, // Add this
-    int? maskHeight, // Add this
+    double guidance = 1.0, // Already passed
+    double eta = 0.0, // Already passed
+    int sampleMethod = 0, // Already passed
+    int sampleSteps = 20, // Already passed
+    double strength = 0.5, // Already passed
+    int seed = 42, // Already passed
+    int batchCount = 1, // Already passed
+    Uint8List? controlImageData, // Already passed
+    int? controlImageWidth, // Already passed
+    int? controlImageHeight, // Already passed
+    double controlStrength = 0.9, // Already passed
+    Uint8List? maskImageData, // Already passed
+    int? maskWidth, // Already passed
+    int? maskHeight, // Already passed
+    // New parameters from advanced sampling options
+    double slgScale = 0.0,
+    String? skipLayersText,
+    double skipLayerStart = 0.01,
+    double skipLayerEnd = 0.2,
   }) async {
     _loadingController.add(true);
     try {
@@ -697,20 +746,26 @@ class Img2ImgProcessor {
         'negativePrompt': negativePrompt,
         'clipSkip': clipSkip,
         'cfgScale': cfgScale,
-        'guidance': guidance,
-        'eta': eta, // Added eta parameter
-        'sampleMethod': sampleMethod,
-        'sampleSteps': sampleSteps,
-        'strength': strength,
-        'seed': seed,
-        'batchCount': batchCount,
-        'controlImageData': controlImageData,
-        'controlImageWidth': controlImageWidth,
-        'controlImageHeight': controlImageHeight,
-        'controlStrength': controlStrength,
-        if (maskImageData != null) 'maskImageData': maskImageData,
-        if (maskWidth != null) 'maskImageWidth': maskWidth,
-        if (maskHeight != null) 'maskImageHeight': maskHeight,
+        'guidance': guidance, // Already passed
+        'eta': eta, // Already passed
+        'sampleMethod': sampleMethod, // Already passed
+        'sampleSteps': sampleSteps, // Already passed
+        'strength': strength, // Already passed
+        'seed': seed, // Already passed
+        'batchCount': batchCount, // Already passed
+        'controlImageData': controlImageData, // Already passed
+        'controlImageWidth': controlImageWidth, // Already passed
+        'controlImageHeight': controlImageHeight, // Already passed
+        'controlStrength': controlStrength, // Already passed
+        if (maskImageData != null)
+          'maskImageData': maskImageData, // Already passed
+        if (maskWidth != null) 'maskImageWidth': maskWidth, // Already passed
+        if (maskHeight != null) 'maskImageHeight': maskHeight, // Already passed
+        // Pass new parameters to isolate
+        'slgScale': slgScale,
+        'skipLayersText': skipLayersText,
+        'skipLayerStart': skipLayerStart,
+        'skipLayerEnd': skipLayerEnd,
       });
     } finally {
       _loadingController.add(false);
