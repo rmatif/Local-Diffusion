@@ -128,6 +128,8 @@ class _InpaintingPageState extends State<InpaintingPage>
   bool _invertMask = false; // State for the checkbox
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
+  bool _isDiffusionModelType =
+      false; // Added state for the standalone model switch
 
   // State for cropped image and mask - These are no longer needed as persistent state
   // CroppedImageData? _croppedImageData; // Removed
@@ -418,6 +420,7 @@ class _InpaintingPageState extends State<InpaintingPage>
       controlImageWidth: _controlWidth,
       controlImageHeight: _controlHeight,
       controlStrength: controlStrength,
+      isDiffusionModelType: _isDiffusionModelType, // Use the state variable
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -1533,6 +1536,7 @@ class _InpaintingPageState extends State<InpaintingPage>
               const SizedBox(height: 16), // Spacing after sliders
             ],
             // --- End Sliders ---
+            const SizedBox(height: 16), // Added spacing
             Row(
               // This is the row for Create/Load Mask buttons
               children: [
@@ -1543,12 +1547,6 @@ class _InpaintingPageState extends State<InpaintingPage>
                   child: Text(_maskData != null || _currentStrokes.isNotEmpty
                       ? 'Edit Mask'
                       : 'Create Mask'),
-                ),
-                const SizedBox(width: 8),
-                ShadButton(
-                  onPressed: _loadMask,
-                  enabled: !(isModelLoading || isGenerating),
-                  child: const Text('Load Mask'),
                 ),
               ],
             ),
@@ -1565,29 +1563,20 @@ class _InpaintingPageState extends State<InpaintingPage>
                 label: const Text('Invert Mask'),
               ),
             ],
-            const SizedBox(height: 16),
-            ShadInput(
-              key: _promptFieldKey,
-              placeholder: const Text('Prompt'),
-              controller: _promptController,
-              onChanged: (String? v) => setState(() => prompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-            ShadInput(
-              placeholder: const Text('Negative Prompt'),
-              onChanged: (String? v) =>
-                  setState(() => negativePrompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
+            // --- Advanced Model Options Accordion ---
             ShadAccordion<Map<String, dynamic>>(
               children: [
                 ShadAccordionItem<Map<String, dynamic>>(
-                  value: const {},
-                  title: const Text('Advanced Options'),
+                  value: const {}, // Unique value for this item
+                  title: const Text('Advanced Model Options'),
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // --- PASTED CONTENT START ---
+                        // Standalone Model Switch (Cut from here)
+                        // Padding(...)
                         Row(
                           children: [
                             SizedBox(
@@ -1744,6 +1733,18 @@ class _InpaintingPageState extends State<InpaintingPage>
                             ),
                           ],
                         ),
+                        // Standalone Model Switch (Pasted here)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              top: 8.0,
+                              bottom: 16.0), // Adjust padding as needed
+                          child: ShadSwitch(
+                            value: _isDiffusionModelType,
+                            onChanged: (v) =>
+                                setState(() => _isDiffusionModelType = v),
+                            label: const Text('Standalone Model'),
+                          ),
+                        ),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -1765,7 +1766,9 @@ class _InpaintingPageState extends State<InpaintingPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -1919,7 +1922,9 @@ class _InpaintingPageState extends State<InpaintingPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -2077,7 +2082,9 @@ class _InpaintingPageState extends State<InpaintingPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (t5Files.isNotEmpty) {
@@ -2468,12 +2475,30 @@ class _InpaintingPageState extends State<InpaintingPage>
                           },
                           label: const Text('VAE Tiling'),
                         ),
+                        // --- PASTED CONTENT END ---
+
+                        // Removed duplicate Standalone Model Switch
                       ],
                     ),
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 16), // Spacing after accordion
+            const SizedBox(height: 16),
+            ShadInput(
+              key: _promptFieldKey,
+              placeholder: const Text('Prompt'),
+              controller: _promptController,
+              onChanged: (String? v) => setState(() => prompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Negative Prompt'),
+              onChanged: (String? v) =>
+                  setState(() => negativePrompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
             const SizedBox(height: 16),
             Row(
               children: [

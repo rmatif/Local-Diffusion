@@ -82,6 +82,8 @@ class _OutpaintingPageState extends State<OutpaintingPage>
   ui.Image? _maskImageUi; // To display the generated mask
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
+  bool _isDiffusionModelType =
+      false; // Added state for the standalone model switch
 
   // Padding state variables
   int paddingTop = 0;
@@ -356,6 +358,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
       controlImageWidth: _controlWidth,
       controlImageHeight: _controlHeight,
       controlStrength: controlStrength,
+      isDiffusionModelType: _isDiffusionModelType, // Use the state variable
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -1398,32 +1401,20 @@ class _OutpaintingPageState extends State<OutpaintingPage>
               ],
             ], // End of padding controls
 
-            // --- Prompts ---
-            ShadInput(
-              key: _promptFieldKey,
-              placeholder: const Text('Prompt'),
-              controller: _promptController,
-              onChanged: (String? v) => setState(() => prompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-            ShadInput(
-              placeholder: const Text('Negative Prompt'),
-              onChanged: (String? v) =>
-                  setState(() => negativePrompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-
-            // --- Advanced Options (LoRA, VAE, etc.) ---
+            // --- Advanced Model Options Accordion ---
             ShadAccordion<Map<String, dynamic>>(
               children: [
                 ShadAccordionItem<Map<String, dynamic>>(
-                  value: const {},
-                  title: const Text('Advanced Options'),
+                  value: const {}, // Unique value for this item
+                  title: const Text('Advanced Model Options'),
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // --- LoRA Loading and Selection ---
+                        // --- PASTED CONTENT START ---
+                        // Standalone Model Switch (Cut from here)
+                        // Padding(...)
                         Row(
                           children: [
                             SizedBox(
@@ -1580,8 +1571,19 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                             ),
                           ],
                         ),
+                        // Standalone Model Switch (Pasted here)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              top: 8.0,
+                              bottom: 16.0), // Adjust padding as needed
+                          child: ShadSwitch(
+                            value: _isDiffusionModelType,
+                            onChanged: (v) =>
+                                setState(() => _isDiffusionModelType = v),
+                            label: const Text('Standalone Model'),
+                          ),
+                        ),
                         const SizedBox(height: 16),
-                        // --- Clip L/G Loading ---
                         Row(
                           children: [
                             Expanded(
@@ -1602,7 +1604,9 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -1610,7 +1614,6 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
-                                          // ... [Clip_L selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1633,14 +1636,12 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0) {
+                                                    if (index == 0)
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    }
-                                                    if (index == 1) {
+                                                    if (index == 1)
                                                       return const FixedTableSpanExtent(
                                                           80);
-                                                    }
                                                     return null;
                                                   },
                                                   children: clipFiles
@@ -1726,10 +1727,11 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                                currentModelPath,
-                                                currentFlashAttention,
-                                                currentModelType,
-                                                currentSchedule);
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
                                           }
                                         });
                                       }
@@ -1758,7 +1760,9 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -1766,7 +1770,6 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
-                                          // ... [Clip_G selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1789,14 +1792,12 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0) {
+                                                    if (index == 0)
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    }
-                                                    if (index == 1) {
+                                                    if (index == 1)
                                                       return const FixedTableSpanExtent(
                                                           80);
-                                                    }
                                                     return null;
                                                   },
                                                   children: clipFiles
@@ -1882,10 +1883,11 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                                currentModelPath,
-                                                currentFlashAttention,
-                                                currentModelType,
-                                                currentSchedule);
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
                                           }
                                         });
                                       }
@@ -1898,7 +1900,6 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                           ],
                         ),
                         const SizedBox(height: 16),
-                        // --- T5XXL & Embedding Loading ---
                         Row(
                           children: [
                             Expanded(
@@ -1919,7 +1920,9 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (t5Files.isNotEmpty) {
@@ -1927,7 +1930,6 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
-                                          // ... [T5XXL selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -1950,14 +1952,12 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0) {
+                                                    if (index == 0)
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    }
-                                                    if (index == 1) {
+                                                    if (index == 1)
                                                       return const FixedTableSpanExtent(
                                                           80);
-                                                    }
                                                     return null;
                                                   },
                                                   children: t5Files
@@ -2043,10 +2043,11 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                                currentModelPath,
-                                                currentFlashAttention,
-                                                currentModelType,
-                                                currentSchedule);
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
                                           }
                                         });
                                       }
@@ -2081,10 +2082,11 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                         Schedule currentSchedule =
                                             _processor!.schedule;
                                         _initializeProcessor(
-                                            currentModelPath,
-                                            currentFlashAttention,
-                                            currentModelType,
-                                            currentSchedule);
+                                          currentModelPath,
+                                          currentFlashAttention,
+                                          currentModelType,
+                                          currentSchedule,
+                                        );
                                       }
                                     });
                                   }
@@ -2095,7 +2097,6 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                           ],
                         ),
                         const SizedBox(height: 16),
-                        // --- VAE Loading & Options ---
                         Row(
                           children: [
                             Expanded(
@@ -2124,7 +2125,6 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                           await showShadDialog<String>(
                                         context: context,
                                         builder: (BuildContext context) {
-                                          // ... [VAE selection dialog - same as inpainting] ...
                                           return ShadDialog.alert(
                                             constraints: const BoxConstraints(
                                                 maxWidth: 400),
@@ -2147,14 +2147,12 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                                                 fontSize: 16))),
                                                   ],
                                                   columnSpanExtent: (index) {
-                                                    if (index == 0) {
+                                                    if (index == 0)
                                                       return const FixedTableSpanExtent(
                                                           250);
-                                                    }
-                                                    if (index == 1) {
+                                                    if (index == 1)
                                                       return const FixedTableSpanExtent(
                                                           80);
-                                                    }
                                                     return null;
                                                   },
                                                   children: vaeFiles
@@ -2240,10 +2238,11 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                             Schedule currentSchedule =
                                                 _processor!.schedule;
                                             _initializeProcessor(
-                                                currentModelPath,
-                                                currentFlashAttention,
-                                                currentModelType,
-                                                currentSchedule);
+                                              currentModelPath,
+                                              currentFlashAttention,
+                                              currentModelType,
+                                              currentSchedule,
+                                            );
                                           }
                                         });
                                       }
@@ -2257,7 +2256,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                             ShadCheckbox(
                               value: useVAE,
                               onChanged: (bool v) {
-                                if (_vaePath == null && v) {
+                                if (_vaePath == null) {
                                   _showTemporaryError(
                                       'Please load VAE model first');
                                   return;
@@ -2274,10 +2273,11 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                     Schedule currentSchedule =
                                         _processor!.schedule;
                                     _initializeProcessor(
-                                        currentModelPath,
-                                        currentFlashAttention,
-                                        currentModelType,
-                                        currentSchedule);
+                                      currentModelPath,
+                                      currentFlashAttention,
+                                      currentModelType,
+                                      currentSchedule,
+                                    );
                                   }
                                 });
                               },
@@ -2289,7 +2289,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                         ShadCheckbox(
                           value: useVAETiling,
                           onChanged: (bool v) {
-                            if (useTAESD && v) {
+                            if (useTAESD) {
                               _showTemporaryError(
                                   'VAE Tiling is incompatible with TAESD');
                               return;
@@ -2303,21 +2303,42 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                 SDType currentModelType = _processor!.modelType;
                                 Schedule currentSchedule = _processor!.schedule;
                                 _initializeProcessor(
-                                    currentModelPath,
-                                    currentFlashAttention,
-                                    currentModelType,
-                                    currentSchedule);
+                                  currentModelPath,
+                                  currentFlashAttention,
+                                  currentModelType,
+                                  currentSchedule,
+                                );
                               }
                             });
                           },
                           label: const Text('VAE Tiling'),
                         ),
+                        // --- PASTED CONTENT END ---
+
+                        // Removed duplicate Standalone Model Switch
                       ],
                     ),
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 16), // Spacing after accordion
+
+            // --- Prompts ---
+            ShadInput(
+              key: _promptFieldKey,
+              placeholder: const Text('Prompt'),
+              controller: _promptController,
+              onChanged: (String? v) => setState(() => prompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Negative Prompt'),
+              onChanged: (String? v) =>
+                  setState(() => negativePrompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+
             const SizedBox(height: 16),
 
             // --- ControlNet Options ---

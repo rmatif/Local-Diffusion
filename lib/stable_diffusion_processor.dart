@@ -116,6 +116,7 @@ class StableDiffusionProcessor {
   final int? controlImageWidth;
   final int? controlImageHeight;
   final double controlStrength;
+  final bool isDiffusionModelType; // Added flag for model type
 
   late Isolate _sdIsolate;
   late SendPort _sdSendPort;
@@ -156,6 +157,7 @@ class StableDiffusionProcessor {
     this.controlImageWidth,
     this.controlImageHeight,
     this.controlStrength = 0.9,
+    required this.isDiffusionModelType, // Added parameter
   }) {
     _initializeIsolate();
   }
@@ -222,6 +224,7 @@ class StableDiffusionProcessor {
             'clipSkip': clipSkip,
             'vaeTiling': vaeTiling,
             'controlNetPath': controlNetPath,
+            'isDiffusionModelType': isDiffusionModelType, // Pass the flag
           });
         } else if (message is Map) {
           switch (message['type']) {
@@ -307,6 +310,8 @@ class StableDiffusionProcessor {
             FFIBindings.setProgressCallback(_progressCallbackPtr, nullptr);
 
             Pointer<Utf8>? modelPathUtf8;
+            Pointer<Utf8>?
+                diffusionModelPathUtf8; // Added for the diffusion model path
             Pointer<Utf8>? clipLPathUtf8;
             Pointer<Utf8>? clipGPathUtf8;
             Pointer<Utf8>? t5xxlPathUtf8;
@@ -319,38 +324,54 @@ class StableDiffusionProcessor {
             Pointer<Utf8>? emptyUtf8;
 
             try {
-              modelPathUtf8 = message['modelPath'].toString().toNativeUtf8();
-              clipLPathUtf8 = message['clipLPath']?.toString().toNativeUtf8() ??
-                  "".toNativeUtf8();
-              clipGPathUtf8 = message['clipGPath']?.toString().toNativeUtf8() ??
-                  "".toNativeUtf8();
-              t5xxlPathUtf8 = message['t5xxlPath']?.toString().toNativeUtf8() ??
-                  "".toNativeUtf8();
-              vaePathUtf8 = message['vaePath']?.toString().toNativeUtf8() ??
-                  "".toNativeUtf8();
+              emptyUtf8 = "".toNativeUtf8(); // Reusable empty string
+              final bool isDiffusionModelType = message['isDiffusionModelType'];
+              final String modelPathString = message['modelPath'].toString();
+
+              // Assign path to the correct pointer based on the flag
+              if (isDiffusionModelType) {
+                modelPathUtf8 = emptyUtf8; // Pass empty for standard model path
+                diffusionModelPathUtf8 = modelPathString.toNativeUtf8();
+                print(
+                    "Isolate: Using diffusion_model_path for $modelPathString");
+              } else {
+                modelPathUtf8 = modelPathString.toNativeUtf8();
+                diffusionModelPathUtf8 =
+                    emptyUtf8; // Pass empty for diffusion model path
+                print("Isolate: Using model_path for $modelPathString");
+              }
+
+              // Prepare other paths (use emptyUtf8 if null/empty)
+              clipLPathUtf8 =
+                  message['clipLPath']?.toString().toNativeUtf8() ?? emptyUtf8;
+              clipGPathUtf8 =
+                  message['clipGPath']?.toString().toNativeUtf8() ?? emptyUtf8;
+              t5xxlPathUtf8 =
+                  message['t5xxlPath']?.toString().toNativeUtf8() ?? emptyUtf8;
+              vaePathUtf8 =
+                  message['vaePath']?.toString().toNativeUtf8() ?? emptyUtf8;
               loraDirUtf8 = message['loraPath']?.toString().toNativeUtf8() ??
                   "/".toNativeUtf8(); // Default if null
               taesdPathUtf8 = (message['useTinyAutoencoder'] &&
                       message['taesdPath'] != null)
                   ? message['taesdPath'].toString().toNativeUtf8()
-                  : "".toNativeUtf8();
+                  : emptyUtf8;
               stackedIdEmbedDirUtf8 =
                   message['stackedIdEmbedDir']?.toString().toNativeUtf8() ??
-                      "".toNativeUtf8();
+                      emptyUtf8;
               embedDirUtf8 =
                   message['embedDirPath']?.toString().toNativeUtf8() ??
-                      "".toNativeUtf8();
+                      emptyUtf8;
               controlNetPathUtf8 =
                   message['controlNetPath']?.toString().toNativeUtf8() ??
-                      "".toNativeUtf8();
-              emptyUtf8 = "".toNativeUtf8(); // Reusable empty string
+                      emptyUtf8;
 
               ctx = FFIBindings.newSdCtx(
-                modelPathUtf8,
+                modelPathUtf8, // First path arg
                 clipLPathUtf8,
                 clipGPathUtf8,
                 t5xxlPathUtf8,
-                emptyUtf8, // id_embed_dir (assuming empty for now)
+                diffusionModelPathUtf8, // <<< Pass the correct pointer here
                 vaePathUtf8,
                 taesdPathUtf8,
                 controlNetPathUtf8,
@@ -407,7 +428,13 @@ class StableDiffusionProcessor {
               });
             } finally {
               // Free allocated memory
-              if (modelPathUtf8 != null) calloc.free(modelPathUtf8);
+              // Only free if it's not pointing to the shared emptyUtf8
+              if (modelPathUtf8 != null &&
+                  modelPathUtf8.address != emptyUtf8?.address)
+                calloc.free(modelPathUtf8);
+              if (diffusionModelPathUtf8 != null &&
+                  diffusionModelPathUtf8.address != emptyUtf8?.address)
+                calloc.free(diffusionModelPathUtf8);
               if (clipLPathUtf8 != null &&
                   clipLPathUtf8.address != emptyUtf8?.address)
                 calloc.free(clipLPathUtf8);
@@ -420,9 +447,10 @@ class StableDiffusionProcessor {
               if (vaePathUtf8 != null &&
                   vaePathUtf8.address != emptyUtf8?.address)
                 calloc.free(vaePathUtf8);
+              // Special case for loraDirUtf8 which defaults to "/"
               if (loraDirUtf8 != null &&
-                  loraDirUtf8.address != emptyUtf8?.address)
-                calloc.free(loraDirUtf8); // Check against empty
+                  loraDirUtf8.address != "/".toNativeUtf8().address)
+                calloc.free(loraDirUtf8);
               if (taesdPathUtf8 != null &&
                   taesdPathUtf8.address != emptyUtf8?.address)
                 calloc.free(taesdPathUtf8);
@@ -435,6 +463,7 @@ class StableDiffusionProcessor {
               if (controlNetPathUtf8 != null &&
                   controlNetPathUtf8.address != emptyUtf8?.address)
                 calloc.free(controlNetPathUtf8);
+              // Free the reusable empty string pointer *once* at the end
               if (emptyUtf8 != null) calloc.free(emptyUtf8);
             }
             break;

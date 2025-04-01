@@ -91,6 +91,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   Timer? _loadingErrorTimer; // Timer to clear the loading error
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
+  bool _isDiffusionModelType = false; // Added state for the new switch
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
@@ -286,6 +287,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       controlImageWidth: _controlWidth, // Add this
       controlImageHeight: _controlHeight, // Add this // Add this
       controlStrength: controlStrength, // Add this
+      isDiffusionModelType: _isDiffusionModelType, // Pass the state variable
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -1146,29 +1148,18 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   ),
                 ),
               ),
-            const SizedBox(height: 16),
-            ShadInput(
-              key: _promptFieldKey,
-              placeholder: const Text('Prompt'),
-              controller: _promptController,
-              onChanged: (String? v) => setState(() => prompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-            ShadInput(
-              placeholder: const Text('Negative Prompt'),
-              onChanged: (String? v) =>
-                  setState(() => negativePrompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
             ShadAccordion<Map<String, dynamic>>(
               children: [
                 ShadAccordionItem<Map<String, dynamic>>(
                   value: const {},
-                  title: const Text('Advanced Options'),
+                  title: const Text('Advanced Model Options'), // Renamed title
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start, // Align items left
                       children: [
+                        // Original content starts here
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -1336,6 +1327,18 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                             )
                           ],
                         ),
+                        // Added Switch for Diffusion Model Type (Moved)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              top: 8.0, bottom: 16.0), // Adjusted padding
+                          child: ShadSwitch(
+                            value: _isDiffusionModelType,
+                            onChanged: (v) =>
+                                setState(() => _isDiffusionModelType = v),
+                            label:
+                                const Text('Standalone Model'), // Renamed label
+                          ),
+                        ),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -1357,7 +1360,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -1522,7 +1527,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -1691,7 +1698,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (t5Files.isNotEmpty) {
@@ -2122,6 +2131,21 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            ShadInput(
+              key: _promptFieldKey,
+              placeholder: const Text('Prompt'),
+              controller: _promptController,
+              onChanged: (String? v) => setState(() => prompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Negative Prompt'),
+              onChanged: (String? v) =>
+                  setState(() => negativePrompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            // Accordion removed from here
             const SizedBox(height: 16),
             Row(
               children: [
@@ -2571,6 +2595,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 ],
               ),
             ],
+            const SizedBox(height: 16), // Added spacing
             Row(
               children: [
                 const Text('Sampling Method'),

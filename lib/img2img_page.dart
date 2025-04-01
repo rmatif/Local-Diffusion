@@ -79,6 +79,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   double strength = 0.5;
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
+  bool _isDiffusionModelType = false; // Added state for the new switch
+  // bool _isDiffusionModelType = false; // Removed duplicate definition
 
   // --- State for Cropping ---
   int _maxCropWidth = 512; // Default, will be updated
@@ -305,6 +307,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       controlImageWidth: _controlWidth, // Add this
       controlImageHeight: _controlHeight, // Add this // Add this
       controlStrength: controlStrength,
+      isDiffusionModelType: _isDiffusionModelType, // Pass the state variable
+      // isDiffusionModelType: _isDiffusionModelType, // Removed duplicate argument
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
@@ -1536,28 +1540,20 @@ class _Img2ImgPageState extends State<Img2ImgPage>
             ],
             // --- End Sliders ---
             const SizedBox(height: 16),
-            ShadInput(
-              key: _promptFieldKey,
-              placeholder: const Text('Prompt'),
-              controller: _promptController,
-              onChanged: (String? v) => setState(() => prompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-            ShadInput(
-              placeholder: const Text('Negative Prompt'),
-              onChanged: (String? v) =>
-                  setState(() => negativePrompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
+            // --- Advanced Model Options Accordion ---
             ShadAccordion<Map<String, dynamic>>(
               children: [
                 ShadAccordionItem<Map<String, dynamic>>(
-                  value: const {},
-                  title: const Text('Advanced Options'),
+                  value: const {}, // Unique value for this item
+                  title: const Text('Advanced Model Options'),
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // --- PASTED CONTENT START ---
+                        // Standalone Model Switch (Cut from here)
+                        // Padding(...)
                         Row(
                           children: [
                             SizedBox(
@@ -1714,6 +1710,18 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                             ),
                           ],
                         ),
+                        // Standalone Model Switch (Pasted here)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              top: 8.0,
+                              bottom: 16.0), // Adjust padding as needed
+                          child: ShadSwitch(
+                            value: _isDiffusionModelType,
+                            onChanged: (v) =>
+                                setState(() => _isDiffusionModelType = v),
+                            label: const Text('Standalone Model'),
+                          ),
+                        ),
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -1735,7 +1743,9 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -1889,7 +1899,9 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (clipFiles.isNotEmpty) {
@@ -2047,7 +2059,9 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                                         .where((file) =>
                                             file.path
                                                 .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
+                                            file.path.endsWith('.bin') ||
+                                            file.path.endsWith(
+                                                '.gguf')) // Added .gguf
                                         .toList();
 
                                     if (t5Files.isNotEmpty) {
@@ -2438,12 +2452,31 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                           },
                           label: const Text('VAE Tiling'),
                         ),
+                        // --- PASTED CONTENT END ---
+
+                        // Removed duplicate Standalone Model Switch
                       ],
                     ),
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 16), // Spacing after accordion
+            // --- End Advanced Model Options Accordion ---
+            ShadInput(
+              key: _promptFieldKey,
+              placeholder: const Text('Prompt'),
+              controller: _promptController,
+              onChanged: (String? v) => setState(() => prompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            ShadInput(
+              placeholder: const Text('Negative Prompt'),
+              onChanged: (String? v) =>
+                  setState(() => negativePrompt = v ?? ''),
+            ),
+            const SizedBox(height: 16),
+            // Removed the old, empty "Advanced Options" accordion
             const SizedBox(height: 16),
             Row(
               children: [

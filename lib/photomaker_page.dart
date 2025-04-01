@@ -162,6 +162,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
       stackedIdEmbedDir: _photomakerDirPath,
       clipSkip: clipSkip.toInt(),
       vaeTiling: useVAETiling,
+      isDiffusionModelType: false, // Photomaker likely doesn't use this path
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;

@@ -187,6 +187,7 @@ class _ScribblePageState extends State<ScribblePage>
       clipSkip: clipSkip.toInt(),
       vaeTiling: useVAETiling,
       controlNetPath: _controlNetPath,
+      isDiffusionModelType: false, // Scribble likely doesn't use this path
       onModelLoaded: () {
         setState(() {
           isModelLoading = false;
