@@ -44,6 +44,60 @@ class StableDiffusionApp extends StatefulWidget {
   State<StableDiffusionApp> createState() => _StableDiffusionAppState();
 }
 
+// Custom widget for looping dot animation
+class LoadingDotsAnimation extends StatefulWidget {
+  final String loadingText;
+  final TextStyle? style;
+  final Duration duration;
+
+  const LoadingDotsAnimation({
+    super.key,
+    required this.loadingText,
+    this.style,
+    this.duration = const Duration(milliseconds: 1200), // Total loop duration
+  });
+
+  @override
+  State<LoadingDotsAnimation> createState() => _LoadingDotsAnimationState();
+}
+
+class _LoadingDotsAnimationState extends State<LoadingDotsAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+    )..repeat(reverse: true); // Make the animation loop back and forth
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        // Calculate dots: 1 to 4 dots (value goes 0 -> 1 -> 0)
+        // Map value (0.0 to 1.0) to dot count (1 to 4)
+        final dotCount = (_controller.value * 3).floor() + 1;
+
+        return Text(
+          '${widget.loadingText}${'.' * dotCount}',
+          style: widget.style,
+        );
+      },
+    );
+  }
+}
+
 class _StableDiffusionAppState extends State<StableDiffusionApp>
     with SingleTickerProviderStateMixin {
   final ScrollController _scrollController =
@@ -916,19 +970,13 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   if (loadingText.isNotEmpty && _loadingError.isEmpty)
                     const SizedBox(height: 8),
                   if (loadingText.isNotEmpty && _loadingError.isEmpty)
-                    TweenAnimationBuilder(
-                      duration: const Duration(milliseconds: 800),
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      builder: (context, value, child) {
-                        return Text(
-                          '$loadingText${'.' * ((value * 5).floor())}',
-                          style: theme.textTheme.p.copyWith(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        );
-                      },
-                    ).animate().fadeIn(),
+                    LoadingDotsAnimation(
+                      loadingText: loadingText,
+                      style: theme.textTheme.p.copyWith(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ).animate().fadeIn(), // Keep the fade-in animation
                 ],
               ),
             ),

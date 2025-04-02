@@ -1056,19 +1056,14 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                   if (loadingText.isNotEmpty && _loadingError.isEmpty)
                     const SizedBox(height: 8),
                   if (loadingText.isNotEmpty && _loadingError.isEmpty)
-                    TweenAnimationBuilder(
-                      duration: const Duration(milliseconds: 800),
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      builder: (context, value, child) {
-                        return Text(
-                          '$loadingText${'.' * ((value * 5).floor())}',
-                          style: theme.textTheme.p.copyWith(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        );
-                      },
-                    ).animate().fadeIn(),
+                    LoadingDotsAnimation(
+                      // Use the custom widget from main.dart
+                      loadingText: loadingText,
+                      style: theme.textTheme.p.copyWith(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ).animate().fadeIn(), // Keep the fade-in animation
                 ],
               ),
             ),
@@ -1279,7 +1274,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                'Load image for Outpainting',
+                                'Load image',
                                 style: TextStyle(
                                     color: theme.colorScheme.primary
                                         .withOpacity(0.5),
