@@ -46,13 +46,14 @@ class StableDiffusionApp extends StatefulWidget {
 
 class _StableDiffusionAppState extends State<StableDiffusionApp>
     with SingleTickerProviderStateMixin {
+  final ScrollController _scrollController =
+      ScrollController(); // Add ScrollController
   Timer? _modelErrorTimer;
   Timer? _errorMessageTimer;
   StableDiffusionProcessor? _processor;
   Image? _generatedImage;
   bool isModelLoading = false;
   bool isGenerating = false;
-
   // Status messages
   String _message = '';
   String _loraMessage = '';
@@ -193,6 +194,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     _cannyProcessor?.dispose();
     _promptController.dispose();
     _skipLayersController.dispose(); // Dispose the new controller
+    _scrollController.dispose(); // Dispose ScrollController
     super.dispose();
   }
 
@@ -843,6 +845,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
         ),
       ),
       body: SingleChildScrollView(
+        controller: _scrollController, // Attach ScrollController
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2917,6 +2920,12 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                       // Use the new centralized error handling
                       _handleLoadingError(
                           'modelError', 'Please load a model first.');
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     // Clear any previous loading errors before generating

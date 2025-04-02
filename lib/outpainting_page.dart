@@ -34,6 +34,8 @@ class OutpaintingPage extends StatefulWidget {
 
 class _OutpaintingPageState extends State<OutpaintingPage>
     with SingleTickerProviderStateMixin {
+  final ScrollController _scrollController =
+      ScrollController(); // Add ScrollController
   Timer? _modelErrorTimer;
   Timer? _errorMessageTimer;
   Img2ImgProcessor? _processor;
@@ -204,6 +206,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
     _cannyProcessor?.dispose();
     _promptController.dispose(); // Dispose text controller
     _skipLayersController.dispose(); // Dispose the new controller
+    _scrollController.dispose(); // Dispose ScrollController
     super.dispose();
   }
 
@@ -984,6 +987,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
         ),
       ),
       body: SingleChildScrollView(
+        controller: _scrollController, // Attach ScrollController
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3213,14 +3217,39 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                     if (_processor == null) {
                       _handleLoadingError(
                           'modelError', 'Please load a model first.');
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     if (_inputImage == null ||
                         _rgbBytes == null ||
                         _inputWidth == null ||
                         _inputHeight == null) {
-                      _handleLoadingError(
-                          'inputError', 'Please select an input image first.');
+                      // Show temporary error without full reset
+                      setState(() {
+                        _loadingError = 'Please select an input image first.';
+                        _loadingErrorType = 'inputError';
+                      });
+                      _loadingErrorTimer?.cancel(); // Cancel previous timer
+                      _loadingErrorTimer =
+                          Timer(const Duration(seconds: 10), () {
+                        if (mounted) {
+                          setState(() {
+                            _loadingError = '';
+                            _loadingErrorType = '';
+                          });
+                        }
+                      });
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     // Clear any previous loading errors before generating

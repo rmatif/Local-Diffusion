@@ -28,6 +28,8 @@ class PhotomakerPage extends StatefulWidget {
 
 class _PhotomakerPageState extends State<PhotomakerPage>
     with SingleTickerProviderStateMixin {
+  final ScrollController _scrollController =
+      ScrollController(); // Add ScrollController
   Timer? _modelErrorTimer;
   Timer? _errorMessageTimer;
   StableDiffusionProcessor? _processor;
@@ -141,6 +143,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
     _processor?.dispose();
     _promptController.dispose(); // Dispose text controller
     _skipLayersController.dispose(); // Dispose new controller
+    _scrollController.dispose(); // Dispose ScrollController
     super.dispose();
   }
 
@@ -731,6 +734,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
         ),
       ),
       body: SingleChildScrollView(
+        controller: _scrollController, // Attach ScrollController
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2029,11 +2033,36 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                     if (_processor == null) {
                       _handleLoadingError(
                           'modelError', 'Please load a model first.');
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     if (_selectedImages.isEmpty) {
-                      _handleLoadingError('inputError',
-                          'Please select reference images first.');
+                      // Show temporary error without full reset
+                      setState(() {
+                        _loadingError = 'Please select reference images first.';
+                        _loadingErrorType = 'inputError';
+                      });
+                      _loadingErrorTimer?.cancel(); // Cancel previous timer
+                      _loadingErrorTimer =
+                          Timer(const Duration(seconds: 10), () {
+                        if (mounted) {
+                          setState(() {
+                            _loadingError = '';
+                            _loadingErrorType = '';
+                          });
+                        }
+                      });
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     // Clear any previous loading errors before generating

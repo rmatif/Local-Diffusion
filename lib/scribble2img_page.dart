@@ -32,6 +32,8 @@ class ScribblePage extends StatefulWidget {
 
 class _ScribblePageState extends State<ScribblePage>
     with SingleTickerProviderStateMixin {
+  final ScrollController _scrollController =
+      ScrollController(); // Add ScrollController
   Timer? _modelErrorTimer;
   Timer? _errorMessageTimer;
   StableDiffusionProcessor? _processor;
@@ -165,6 +167,7 @@ class _ScribblePageState extends State<ScribblePage>
     _drawingController.dispose(); // Dispose drawing controller
     _promptController.dispose(); // Dispose text controller
     _skipLayersController.dispose(); // Dispose new controller
+    _scrollController.dispose(); // Dispose ScrollController
     super.dispose();
   }
 
@@ -1254,6 +1257,7 @@ class _ScribblePageState extends State<ScribblePage>
         ),
       ),
       body: SingleChildScrollView(
+        controller: _scrollController, // Attach ScrollController
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2688,11 +2692,36 @@ class _ScribblePageState extends State<ScribblePage>
                     if (_processor == null) {
                       _handleLoadingError(
                           'modelError', 'Please load a model first.');
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     if (!_hasDrawing || _originalDrawingRgbBytes == null) {
-                      _handleLoadingError(
-                          'inputError', 'Please create a drawing first.');
+                      // Show temporary error without full reset
+                      setState(() {
+                        _loadingError = 'Please create a drawing first.';
+                        _loadingErrorType = 'inputError';
+                      });
+                      _loadingErrorTimer?.cancel(); // Cancel previous timer
+                      _loadingErrorTimer =
+                          Timer(const Duration(seconds: 10), () {
+                        if (mounted) {
+                          setState(() {
+                            _loadingError = '';
+                            _loadingErrorType = '';
+                          });
+                        }
+                      });
+                      // Scroll to top to show the error
+                      _scrollController.animateTo(
+                        0.0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
                       return;
                     }
                     // Clear any previous loading errors before generating
