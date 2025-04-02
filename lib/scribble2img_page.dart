@@ -98,6 +98,7 @@ class _ScribblePageState extends State<ScribblePage>
   final TextEditingController _skipLayersController = TextEditingController();
   String? _skipLayersErrorText;
   // --- End added state variables ---
+  bool _showInfoMessage = true; // Flag to show the initial info message
 
   // --- State for Cropping ---
   int _maxCropWidth = 512; // Default, will be updated
@@ -177,6 +178,7 @@ class _ScribblePageState extends State<ScribblePage>
 
   void _initializeProcessor(String modelPath, bool useFlashAttention,
       SDType modelType, Schedule schedule) {
+    setState(() => _showInfoMessage = false); // Hide info message
     setState(() {
       isModelLoading = true;
       loadingText = 'Loading Model...';
@@ -433,6 +435,8 @@ class _ScribblePageState extends State<ScribblePage>
                             final imageData =
                                 await _drawingController.getImageData();
                             if (imageData != null) {
+                              setState(() => _showInfoMessage =
+                                  false); // Hide info message on save
                               final pngBytesForDisplay =
                                   imageData.buffer.asUint8List();
                               final originalImage =
@@ -1254,6 +1258,46 @@ class _ScribblePageState extends State<ScribblePage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Informational Message
+            if (_showInfoMessage)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade100, // Changed background color
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.blue.shade300, // Changed border color
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  // Removed crossAxisAlignment and textBaseline
+                  children: [
+                    Padding(
+                      // Added Padding
+                      padding:
+                          const EdgeInsets.only(top: 2.0), // Added top padding
+                      child: Icon(
+                        LucideIcons.info,
+                        size: 20,
+                        color: Colors.blue.shade800, // Changed icon color
+                      ),
+                    ), // Removed extra parenthesis from the line below
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'ControlNet models are only compatible with SD1.5 models.',
+                        style: theme.textTheme.p.copyWith(
+                          color: Colors.blue.shade800, // Changed text color
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1, end: 0),
+
             // Display Loading Status / Success / Error Messages (Copied)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
@@ -1338,6 +1382,8 @@ class _ScribblePageState extends State<ScribblePage>
                 ShadButton(
                   enabled: !(isModelLoading || isGenerating),
                   onPressed: () async {
+                    setState(
+                        () => _showInfoMessage = false); // Hide info message
                     final modelDirPath = await getModelDirectory();
                     final selectedDir = await FilePicker.platform
                         .getDirectoryPath(initialDirectory: modelDirPath);
@@ -1477,6 +1523,8 @@ class _ScribblePageState extends State<ScribblePage>
                     ShadButton(
                       enabled: !(isModelLoading || isGenerating),
                       onPressed: () async {
+                        setState(() =>
+                            _showInfoMessage = false); // Hide info message
                         final modelDirPath = await getModelDirectory();
                         final selectedDir = await FilePicker.platform
                             .getDirectoryPath(initialDirectory: modelDirPath);
@@ -1661,6 +1709,8 @@ class _ScribblePageState extends State<ScribblePage>
               onTap: (isModelLoading || isGenerating)
                   ? null
                   : () async {
+                      setState(
+                          () => _showInfoMessage = false); // Hide info message
                       if (_hasDrawing) {
                         final shouldClear = await showShadDialog<bool>(
                           context: context,
@@ -1868,6 +1918,8 @@ class _ScribblePageState extends State<ScribblePage>
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
                                   final modelDirPath =
                                       await getModelDirectory();
                                   final selectedDir = await FilePicker.platform
@@ -2023,6 +2075,8 @@ class _ScribblePageState extends State<ScribblePage>
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
                                   final modelDirPath =
                                       await getModelDirectory();
                                   final selectedDir = await FilePicker.platform
@@ -2063,6 +2117,8 @@ class _ScribblePageState extends State<ScribblePage>
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
                                   final modelDirPath =
                                       await getModelDirectory();
                                   final selectedDir = await FilePicker.platform

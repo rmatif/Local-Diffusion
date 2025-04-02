@@ -86,6 +86,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   String? _skipLayersErrorText;
   // --- End added state variables ---
   bool normalizeInput = false; // Added for normalize_input option
+  bool _showInfoMessage = true; // Flag to show the initial info message
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -153,6 +154,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
 
   void _initializeProcessor(String modelPath, bool useFlashAttention,
       SDType modelType, Schedule schedule) {
+    setState(() => _showInfoMessage = false); // Hide info message
     setState(() {
       isModelLoading = true;
       loadingText = 'Loading Model...';
@@ -360,6 +362,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   }
 
   Future<void> _pickImages() async {
+    setState(() => _showInfoMessage = false); // Hide info message
     final picker = ImagePicker();
     final pickedFiles = await picker.pickMultiImage();
     setState(() {
@@ -732,6 +735,46 @@ class _PhotomakerPageState extends State<PhotomakerPage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Informational Message
+            if (_showInfoMessage)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade100, // Changed background color
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.blue.shade300, // Changed border color
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  // Removed crossAxisAlignment and textBaseline
+                  children: [
+                    Padding(
+                      // Added Padding
+                      padding:
+                          const EdgeInsets.only(top: 2.0), // Added top padding
+                      child: Icon(
+                        LucideIcons.info,
+                        size: 20,
+                        color: Colors.blue.shade800, // Changed icon color
+                      ),
+                    ), // Removed extra parenthesis from the line below
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'PhotoMaker is only compatible with SDXL models.',
+                        style: theme.textTheme.p.copyWith(
+                          color: Colors.blue.shade800, // Changed text color
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1, end: 0),
+
             // Display Loading Status / Success / Error Messages (Copied)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
@@ -816,6 +859,10 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                 ShadButton(
                   enabled: !(isModelLoading || isGenerating),
                   onPressed: () async {
+                    setState(
+                        () => _showInfoMessage = false); // Hide info message
+                    setState(
+                        () => _showInfoMessage = false); // Hide info message
                     final modelDirPath = await getModelDirectory();
                     final selectedDir = await FilePicker.platform
                         .getDirectoryPath(initialDirectory: modelDirPath);
@@ -938,6 +985,10 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                     ShadButton(
                       enabled: !(isModelLoading || isGenerating),
                       onPressed: () async {
+                        setState(() =>
+                            _showInfoMessage = false); // Hide info message
+                        setState(() =>
+                            _showInfoMessage = false); // Hide info message
                         final modelDirPath = await getModelDirectory();
                         final selectedDir = await FilePicker.platform
                             .getDirectoryPath(initialDirectory: modelDirPath);
@@ -1196,6 +1247,10 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
                                   final modelDirPath =
                                       await getModelDirectory();
                                   final selectedDir = await FilePicker.platform
@@ -1351,6 +1406,10 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
                                   final modelDirPath =
                                       await getModelDirectory();
                                   final selectedDir = await FilePicker.platform
@@ -1391,6 +1450,10 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                               child: ShadButton(
                                 enabled: !(isModelLoading || isGenerating),
                                 onPressed: () async {
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
+                                  setState(() => _showInfoMessage =
+                                      false); // Hide info message
                                   final modelDirPath =
                                       await getModelDirectory();
                                   final selectedDir = await FilePicker.platform
