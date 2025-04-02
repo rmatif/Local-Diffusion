@@ -444,21 +444,56 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     });
   }
 
-  // New method to handle loading errors centrally - FULL RESET
+  // New method to handle loading errors centrally
   void _handleLoadingError(String errorType, String errorMessage) {
     _loadingErrorTimer?.cancel(); // Cancel previous timer if any
 
-    // Dispose the processor and kill the isolate regardless of error type
+    // Call the central reset function
+    _resetState(); // Call the new reset function
+
+    // Set the specific error message for loading failure
     _processor?.dispose();
+
+    setState(() {
+      _loadingError = errorMessage; // Display the specific error
+      _loadingErrorType = errorType; // Store error type if needed elsewhere
+
+      // Handle generation-specific errors separately if needed
+      if (errorType == 'generationError') {
+        status = 'Generation failed: $errorMessage';
+        isGenerating = false; // Stop generation indicator
+      } else {
+        // For loading errors, clear status too
+        status = '';
+        progress = 0;
+      }
+
+      // Clear the error message after a delay
+      _loadingErrorTimer = Timer(const Duration(seconds: 10), () {
+        if (mounted) {
+          // Check if the widget is still in the tree
+          setState(() {
+            _loadingError = '';
+            _loadingErrorType = '';
+          });
+        }
+      });
+    });
+  }
+
+  // Central function to reset the state
+  void _resetState() {
+    _processor?.dispose(); // Dispose the processor if it exists
 
     setState(() {
       _processor = null; // Set processor to null
       isModelLoading = false; // Stop loading indicator
+      isGenerating = false; // Stop generation indicator
       loadingText = ''; // Clear loading text
-      _loadingError = errorMessage; // Display the specific error
-      _loadingErrorType = errorType; // Store error type if needed elsewhere
+      _loadingError = ''; // Clear loading error
+      _loadingErrorType = '';
+      _loadingErrorTimer?.cancel(); // Cancel timer if active
 
-      // --- Full Reset ---
       // Clear all loaded component indicators
       loadedComponents.clear();
       // Reset all paths
@@ -488,28 +523,36 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       _message = ''; // Clear success messages too
       _taesdMessage = '';
       _loraMessage = '';
+      _taesdError = ''; // Clear TAESD specific errors
+      _errorMessageTimer?.cancel();
+      status = ''; // Clear generation status
+      progress = 0; // Reset progress
+      _generatedImage = null; // Clear generated image
+      _generationLogs = []; // Clear logs
+      _showLogsButton = false; // Hide log button
 
-      // Handle generation-specific errors separately if needed
-      if (errorType == 'generationError') {
-        status = 'Generation failed: $errorMessage';
-        isGenerating = false; // Stop generation indicator
-      } else {
-        // For loading errors, clear status too
-        status = '';
-        progress = 0;
-      }
-      // --- End Full Reset ---
-
-      // Clear the error message after a delay
-      _loadingErrorTimer = Timer(const Duration(seconds: 10), () {
-        if (mounted) {
-          // Check if the widget is still in the tree
-          setState(() {
-            _loadingError = '';
-            _loadingErrorType = '';
-          });
-        }
-      });
+      // Reset UI elements (optional, but good practice)
+      _promptController.clear();
+      prompt = '';
+      negativePrompt = '';
+      // Reset advanced options to defaults if needed
+      // clipSkip = 0;
+      // eta = 0.0;
+      // guidance = 3.5;
+      // slgScale = 0.0;
+      // skipLayersText = '';
+      // _skipLayersController.clear();
+      // skipLayerStart = 0.01;
+      // skipLayerEnd = 0.2;
+      // samplingMethod = 'euler_a';
+      // cfg = 7;
+      // steps = 25;
+      // width = 512;
+      // height = 512;
+      // seed = "-1";
+      // controlStrength = 0.9;
+      // _controlImageProcessingMode = 'Resize';
+      // _isDiffusionModelType = false;
     });
   }
 
@@ -750,6 +793,51 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: theme.colorScheme.background,
         elevation: 0,
+        actions: [
+          // Add Unload button only if a model is loaded
+          if (_processor != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              // Wrap the button with a Tooltip widget
+              child: Tooltip(
+                message: 'Unload Model & Reset', // Use the message property
+                child: ShadButton.ghost(
+                  icon: const Icon(
+                    LucideIcons
+                        .powerOff, // Or LucideIcons.unload, LucideIcons.xCircle
+                    size: 20,
+                  ),
+                  // Remove the invalid tooltip parameter from ShadButton.ghost
+                  onPressed: (isModelLoading || isGenerating)
+                      ? null // Disable if loading or generating
+                      : () {
+                          // Show confirmation dialog
+                          showShadDialog(
+                            context: context,
+                            builder: (context) => ShadDialog.alert(
+                              title: const Text('Confirm Unload'),
+                              description: const Text(
+                                  'Are you sure you want to unload the current model and reset all settings?'),
+                              actions: [
+                                ShadButton.outline(
+                                  onPressed: () => Navigator.of(context).pop(),
+                                  child: const Text('Cancel'),
+                                ),
+                                ShadButton.destructive(
+                                  onPressed: () {
+                                    Navigator.of(context).pop(); // Close dialog
+                                    _resetState(); // Call the reset function
+                                  },
+                                  child: const Text('Confirm Unload'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                ),
+              ),
+            ),
+        ],
       ),
       drawer: Drawer(
         width: 240, // Reduced width from default 304
@@ -2965,7 +3053,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   enabled: !(isModelLoading || isGenerating),
                   onPressed: () {
                     if (_processor == null) {
-                      // Use the new centralized error handling
+                      // Show error if no model is loaded
                       _handleLoadingError(
                           'modelError', 'Please load a model first.');
                       // Scroll to top to show the error
