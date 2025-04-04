@@ -628,7 +628,20 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     return Scaffold(
+      // Disable drawer drag gesture when loading or generating
+      drawerEnableOpenDragGesture: !(isModelLoading || isGenerating),
       appBar: AppBar(
+        // Explicitly add the leading menu button to control its state
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            // Disable the button when loading or generating
+            onPressed: (isModelLoading || isGenerating)
+                ? null
+                : () => Scaffold.of(context).openDrawer(),
+            tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
+          ),
+        ),
         title: const Text('Photomaker',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: theme.colorScheme.background,
