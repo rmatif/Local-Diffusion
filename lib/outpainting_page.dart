@@ -2895,36 +2895,9 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                             ],
                           ),
                           const SizedBox(height: 16),
-                          // --- Control Image Reference ---
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: ShadCheckbox(
-                              value: useControlImage,
-                              onChanged: (_controlNetPath == null ||
-                                      isModelLoading ||
-                                      isGenerating)
-                                  ? null
-                                  : (bool v) {
-                                      // Enable only if CN model loaded
-                                      setState(() {
-                                        useControlImage = v;
-                                        if (!v) {
-                                          _controlImage = null;
-                                          _controlRgbBytes = null;
-                                          _controlWidth = null;
-                                          _controlHeight = null;
-                                          _cannyImage =
-                                              null; // Clear canny result if ref image removed
-                                          useCanny =
-                                              false; // Disable canny if ref image removed
-                                        }
-                                        // Re-initialize processor if CN image status changes? Maybe not needed unless image data itself changes.
-                                      });
-                                    },
-                              label: const Text('Use Image Reference'),
-                            ),
-                          ),
-                          if (useControlImage) ...[
+                          // Removed "Use Image Reference" checkbox
+                          // Always show image input and Canny options when ControlNet is enabled
+                          ...[
                             const SizedBox(height: 16),
                             // --- Control Image Picker ---
                             GestureDetector(
@@ -3135,7 +3108,7 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                                 ),
                               ],
                             ),
-                          ], // End of if(useControlImage)
+                          ], // End of always shown block
                           // --- Control Strength ---
                           Row(
                             children: [
@@ -3434,7 +3407,8 @@ class _OutpaintingPageState extends State<OutpaintingPage>
                     int? sourceControlWidth;
                     int? sourceControlHeight;
 
-                    if (useControlNet && useControlImage) {
+                    if (useControlNet) {
+                      // Removed check for useControlImage
                       if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
                         // Use Canny result if available and Canny is enabled
                         sourceControlBytes = _cannyProcessor!.resultRgbBytes!;

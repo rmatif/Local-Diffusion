@@ -3036,25 +3036,9 @@ class _InpaintingPageState extends State<InpaintingPage>
                             ],
                           ),
                           const SizedBox(height: 16),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: ShadCheckbox(
-                              value: useControlImage,
-                              onChanged: (bool v) {
-                                setState(() {
-                                  useControlImage = v;
-                                  if (!v) {
-                                    _controlImage = null;
-                                    _controlRgbBytes = null;
-                                    _controlWidth = null;
-                                    _controlHeight = null;
-                                  }
-                                });
-                              },
-                              label: const Text('Use Image Reference'),
-                            ),
-                          ),
-                          if (useControlImage) ...[
+                          // Removed "Use Image Reference" checkbox
+                          // Always show image input and Canny options when ControlNet is enabled
+                          ...[
                             const SizedBox(height: 16),
                             GestureDetector(
                               onTap: (isModelLoading || isGenerating)
@@ -3204,7 +3188,7 @@ class _InpaintingPageState extends State<InpaintingPage>
                                 ),
                               ),
                             ],
-                          ],
+                          ], // End of always shown block
                           const SizedBox(height: 16),
                           // Dropdown for Crop/Resize ControlNet Image
                           Row(
@@ -3477,7 +3461,8 @@ class _InpaintingPageState extends State<InpaintingPage>
                     int? sourceControlWidth;
                     int? sourceControlHeight;
 
-                    if (useControlNet && useControlImage) {
+                    if (useControlNet) {
+                      // Removed check for useControlImage
                       if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
                         // Use Canny result if available and Canny is enabled
                         sourceControlBytes = _cannyProcessor!.resultRgbBytes!;
