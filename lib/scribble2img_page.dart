@@ -441,7 +441,8 @@ class _ScribblePageState extends State<ScribblePage>
     final theme = ShadTheme.of(context); // Get theme
     final screenSize = MediaQuery.of(context).size;
     final dialogWidth = screenSize.width * 0.9;
-    final dialogHeight = screenSize.height * 0.7;
+    final dialogHeight =
+        screenSize.height * 0.8; // Increase dialog height factor
 
     // Keep track of selected color and stroke width within the dialog state
     Color currentColor = _drawingController.drawConfig.value.color;
@@ -710,7 +711,7 @@ class _ScribblePageState extends State<ScribblePage>
                     background: Container(
                       width: dialogWidth,
                       height: dialogHeight -
-                          150, // Adjust height accounting for tools
+                          120, // Increase height by reducing subtracted value
                       // color: Colors.white, // Color is now part of decoration
                       // Add a subtle border to frame the drawing area
                       decoration: BoxDecoration(

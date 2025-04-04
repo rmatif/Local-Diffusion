@@ -387,30 +387,29 @@ class StableDiffusionProcessor {
                       emptyUtf8;
 
               ctx = FFIBindings.newSdCtx(
-                modelPathUtf8, // First path arg
-                clipLPathUtf8,
-                clipGPathUtf8,
-                t5xxlPathUtf8,
-                diffusionModelPathUtf8, // <<< Pass the correct pointer here
-                vaePathUtf8,
-                taesdPathUtf8,
-                controlNetPathUtf8,
-                loraDirUtf8,
-                embedDirUtf8,
-                stackedIdEmbedDirUtf8,
-                message['useFlashAttention'],
-                message['vaeTiling'],
-                false, // free_params_immediately
-                FFIBindings.getCores() * 2, // n_threads
+                modelPathUtf8, // 1
+                clipLPathUtf8, // 2
+                clipGPathUtf8, // 3
+                t5xxlPathUtf8, // 4
+                diffusionModelPathUtf8, // 5
+                vaePathUtf8, // 6
+                taesdPathUtf8, // 7
+                controlNetPathUtf8, // 8
+                loraDirUtf8, // 9
+                embedDirUtf8, // 10
+                stackedIdEmbedDirUtf8, // 11
+                false, // 12 vae_decode_only (Assuming false, make configurable if needed)
+                message['vaeTiling'], // 13
+                false, // 14 free_params_immediately
+                FFIBindings.getCores() * 2, // 15 n_threads
                 mapModelTypeToIndex(
-                    SDType.values[message['modelType']]), // wtype
-                0, // rng_type (STD_DEFAULT_RNG)
-                message['schedule'], // schedule
-                false, // keep_clip_on_cpu
-                false, // keep_control_net_cpu
-                false, // keep_vae_on_cpu
-                message['clipSkip'],
-                message['useFlashAttention'], // diffusion_flash_attn
+                    SDType.values[message['modelType']]), // 16 wtype
+                0, // 17 rng_type (STD_DEFAULT_RNG)
+                message['schedule'], // 18 schedule
+                false, // 19 keep_clip_on_cpu
+                false, // 20 keep_control_net_cpu
+                false, // 21 keep_vae_on_cpu
+                message['useFlashAttention'], // 22 diffusion_flash_attn
               );
 
               if (ctx != null && ctx!.address != 0) {

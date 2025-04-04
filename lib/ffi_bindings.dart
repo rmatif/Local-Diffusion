@@ -117,54 +117,53 @@ class FFIBindings {
           Pointer<Void>)>('sd_set_progress_callback');
 
   static final newSdCtx = _lib.lookupFunction<
-      Pointer<Void> Function(
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Bool,
-          Bool,
-          Bool,
-          Int32,
-          Int32,
-          Int32,
-          Int32,
-          Bool,
-          Bool,
-          Bool,
-          Int32,
-          Bool),
-      Pointer<Void> Function(
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          Pointer<Utf8>,
-          bool,
-          bool,
-          bool,
-          int,
-          int,
-          int,
-          int,
-          bool,
-          bool,
-          bool,
-          int,
-          bool)>('new_sd_ctx', isLeaf: false);
+          Pointer<Void> Function(
+              Pointer<Utf8>, // 1 model_path
+              Pointer<Utf8>, // 2 clip_l_path
+              Pointer<Utf8>, // 3 clip_g_path
+              Pointer<Utf8>, // 4 t5xxl_path
+              Pointer<Utf8>, // 5 diffusion_model_path
+              Pointer<Utf8>, // 6 vae_path
+              Pointer<Utf8>, // 7 taesd_path
+              Pointer<Utf8>, // 8 control_net_path_c_str
+              Pointer<Utf8>, // 9 lora_model_dir
+              Pointer<Utf8>, // 10 embed_dir_c_str
+              Pointer<Utf8>, // 11 stacked_id_embed_dir_c_str
+              Bool, // 12 vae_decode_only
+              Bool, // 13 vae_tiling
+              Bool, // 14 free_params_immediately
+              Int32, // 15 n_threads
+              Int32, // 16 wtype (maps to sd_type_t enum)
+              Int32, // 17 rng_type (maps to rng_type_t enum)
+              Int32, // 18 s (maps to schedule_t enum)
+              Bool, // 19 keep_clip_on_cpu
+              Bool, // 20 keep_control_net_cpu
+              Bool, // 21 keep_vae_on_cpu
+              Bool), // 22 diffusion_flash_attn
+          Pointer<Void> Function(
+              Pointer<Utf8>, // 1
+              Pointer<Utf8>, // 2
+              Pointer<Utf8>, // 3
+              Pointer<Utf8>, // 4
+              Pointer<Utf8>, // 5
+              Pointer<Utf8>, // 6
+              Pointer<Utf8>, // 7
+              Pointer<Utf8>, // 8
+              Pointer<Utf8>, // 9
+              Pointer<Utf8>, // 10
+              Pointer<Utf8>, // 11
+              bool, // 12
+              bool, // 13
+              bool, // 14
+              int, // 15
+              int, // 16
+              int, // 17
+              int, // 18
+              bool, // 19
+              bool, // 20
+              bool, // 21
+              bool)> // 22
+      ('new_sd_ctx', isLeaf: false);
 
   static final freeSdCtx = _lib.lookupFunction<Void Function(Pointer<Void>),
       void Function(Pointer<Void>)>('free_sd_ctx', isLeaf: false);
