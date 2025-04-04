@@ -208,7 +208,12 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
 
   List<int> getWidthOptions() {
     List<int> opts = [];
+    // 128 to 512 (inclusive)
     for (int i = 128; i <= 512; i += 64) {
+      opts.add(i);
+    }
+    // 576 to 1024 (inclusive)
+    for (int i = 576; i <= 1024; i += 64) {
       opts.add(i);
     }
     return opts;
@@ -3022,6 +3027,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
+                    maxHeight: 200, // Added max height
                     placeholder: const Text('512'),
                     options: getWidthOptions()
                         .map((w) => ShadOption(
@@ -3041,6 +3047,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<int>(
+                    maxHeight: 200, // Added max height
                     placeholder: const Text('512'),
                     options: getHeightOptions()
                         .map((h) => ShadOption(
