@@ -438,253 +438,299 @@ class _ScribblePageState extends State<ScribblePage>
   }
 
   Future<void> _openDrawingBoard() async {
+    final theme = ShadTheme.of(context); // Get theme
     final screenSize = MediaQuery.of(context).size;
     final dialogWidth = screenSize.width * 0.9;
     final dialogHeight = screenSize.height * 0.7;
 
-    _drawingController.setStyle(color: Colors.black, strokeWidth: 3.0);
+    // Keep track of selected color and stroke width within the dialog state
+    Color currentColor = _drawingController.drawConfig.value.color;
+    double currentStrokeWidth = _drawingController.drawConfig.value.strokeWidth;
 
+    // Set initial style (can be adjusted)
+    // _drawingController.setStyle(color: currentColor, strokeWidth: currentStrokeWidth);
     final result = await showDialog<Uint8List>(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        child: Container(
-          width: dialogWidth,
-          height: dialogHeight,
-          child: Column(
-            children: [
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Drawing Board',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    Row(
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancel'),
-                          style: TextButton.styleFrom(
-                            padding: EdgeInsets.symmetric(horizontal: 8),
-                            foregroundColor: Colors.black,
+      // Use StatefulBuilder to manage color/width selection state within the dialog
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => Dialog(
+          backgroundColor: theme.colorScheme.background, // Use theme background
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          shape: RoundedRectangleBorder(
+            // Add border radius consistent with Shadcn
+            borderRadius: theme.radius,
+          ),
+          child: Container(
+            width: dialogWidth,
+            height: dialogHeight,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 4.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Drawing Board',
+                        style: theme.textTheme.h4, // Use theme style
+                      ),
+                      Row(
+                        children: [
+                          ShadButton.ghost(
+                            // Replace with ShadButton.ghost
+                            icon: const Icon(LucideIcons.x, size: 18),
+                            onPressed: () => Navigator.of(context).pop(),
                           ),
-                        ),
-                        TextButton(
-                          onPressed: () async {
-                            final imageData =
-                                await _drawingController.getImageData();
-                            if (imageData != null) {
-                              setState(() => _showInfoMessage =
-                                  false); // Hide info message on save
-                              final pngBytesForDisplay =
-                                  imageData.buffer.asUint8List();
-                              final originalImage =
-                                  img.decodeImage(pngBytesForDisplay);
+                          const SizedBox(width: 8), // Add spacing
+                          ShadButton.ghost(
+                            // Replace with ShadButton.ghost
+                            icon: const Icon(LucideIcons.check, size: 18),
+                            onPressed: () async {
+                              final imageData =
+                                  await _drawingController.getImageData();
+                              if (imageData != null) {
+                                setState(() => _showInfoMessage =
+                                    false); // Hide info message on save
+                                final pngBytesForDisplay =
+                                    imageData.buffer.asUint8List();
+                                final originalImage =
+                                    img.decodeImage(pngBytesForDisplay);
 
-                              if (originalImage != null) {
-                                // --- Store Original Data ---
-                                _originalDrawingWidth = originalImage.width;
-                                _originalDrawingHeight = originalImage.height;
+                                if (originalImage != null) {
+                                  // --- Store Original Data ---
+                                  _originalDrawingWidth = originalImage.width;
+                                  _originalDrawingHeight = originalImage.height;
 
-                                // Convert original to RGB immediately for later cropping
-                                final originalRgbBytes = Uint8List(
-                                    _originalDrawingWidth! *
-                                        _originalDrawingHeight! *
-                                        3);
-                                int rgbIndex = 0;
-                                for (int y = 0;
-                                    y < _originalDrawingHeight!;
-                                    y++) {
-                                  for (int x = 0;
-                                      x < _originalDrawingWidth!;
-                                      x++) {
-                                    final pixel = originalImage.getPixel(x, y);
-                                    originalRgbBytes[rgbIndex++] =
-                                        pixel.r.toInt();
-                                    originalRgbBytes[rgbIndex++] =
-                                        pixel.g.toInt();
-                                    originalRgbBytes[rgbIndex++] =
-                                        pixel.b.toInt();
+                                  // Convert original to RGB immediately for later cropping
+                                  final originalRgbBytes = Uint8List(
+                                      _originalDrawingWidth! *
+                                          _originalDrawingHeight! *
+                                          3);
+                                  int rgbIndex = 0;
+                                  for (int y = 0;
+                                      y < _originalDrawingHeight!;
+                                      y++) {
+                                    for (int x = 0;
+                                        x < _originalDrawingWidth!;
+                                        x++) {
+                                      final pixel =
+                                          originalImage.getPixel(x, y);
+                                      originalRgbBytes[rgbIndex++] =
+                                          pixel.r.toInt();
+                                      originalRgbBytes[rgbIndex++] =
+                                          pixel.g.toInt();
+                                      originalRgbBytes[rgbIndex++] =
+                                          pixel.b.toInt();
+                                    }
                                   }
-                                }
-                                _originalDrawingRgbBytes = originalRgbBytes;
-                                // --- End Store Original Data ---
+                                  _originalDrawingRgbBytes = originalRgbBytes;
+                                  // --- End Store Original Data ---
 
-                                // --- Initialize Cropping State ---
-                                _maxCropWidth =
-                                    largestMultipleOf64(_originalDrawingWidth!);
-                                _maxCropHeight = largestMultipleOf64(
-                                    _originalDrawingHeight!);
+                                  // --- Initialize Cropping State ---
+                                  _maxCropWidth = largestMultipleOf64(
+                                      _originalDrawingWidth!);
+                                  _maxCropHeight = largestMultipleOf64(
+                                      _originalDrawingHeight!);
 
-                                // Reset width/height sliders to default/initial aspect ratio
-                                double initialAspectRatio =
-                                    _originalDrawingWidth! /
-                                        _originalDrawingHeight!;
-                                int initialCropW, initialCropH;
-                                if (initialAspectRatio >= 1) {
-                                  // Wider or square
-                                  initialCropW = math.min(512, _maxCropWidth);
-                                  initialCropH = largestMultipleOf64(
-                                      (initialCropW / initialAspectRatio)
-                                          .round());
-                                  initialCropH =
-                                      math.min(initialCropH, _maxCropHeight);
-                                  initialCropW = largestMultipleOf64(
-                                      (initialCropH * initialAspectRatio)
-                                          .round());
-                                  initialCropW =
-                                      math.min(initialCropW, _maxCropWidth);
+                                  // Reset width/height sliders to default/initial aspect ratio
+                                  double initialAspectRatio =
+                                      _originalDrawingWidth! /
+                                          _originalDrawingHeight!;
+                                  int initialCropW, initialCropH;
+                                  if (initialAspectRatio >= 1) {
+                                    // Wider or square
+                                    initialCropW = math.min(512, _maxCropWidth);
+                                    initialCropH = largestMultipleOf64(
+                                        (initialCropW / initialAspectRatio)
+                                            .round());
+                                    initialCropH =
+                                        math.min(initialCropH, _maxCropHeight);
+                                    initialCropW = largestMultipleOf64(
+                                        (initialCropH * initialAspectRatio)
+                                            .round());
+                                    initialCropW =
+                                        math.min(initialCropW, _maxCropWidth);
+                                  } else {
+                                    // Taller
+                                    initialCropH =
+                                        math.min(512, _maxCropHeight);
+                                    initialCropW = largestMultipleOf64(
+                                        (initialCropH * initialAspectRatio)
+                                            .round());
+                                    initialCropW =
+                                        math.min(initialCropW, _maxCropWidth);
+                                    initialCropH = largestMultipleOf64(
+                                        (initialCropW / initialAspectRatio)
+                                            .round());
+                                    initialCropH =
+                                        math.min(initialCropH, _maxCropHeight);
+                                  }
+                                  // Ensure minimum size
+                                  int newWidth = math.max(64, initialCropW);
+                                  int newHeight = math.max(64, initialCropH);
+                                  // --- End Initialize Cropping State ---
+
+                                  setState(() {
+                                    _drawingImageData =
+                                        pngBytesForDisplay; // Use original PNG for display
+                                    _hasDrawing = true;
+                                    _showCropUI = true; // Enable cropping UI
+
+                                    // Set initial slider values
+                                    width = newWidth;
+                                    height = newHeight;
+
+                                    // Reset crop rect position and display size
+                                    _cropRect = Rect.zero;
+                                    _imageDisplaySize = Size.zero;
+
+                                    // Set initial control data (will be updated by cropping before generation)
+                                    _controlImageData =
+                                        _originalDrawingRgbBytes;
+                                    _controlWidth = _originalDrawingWidth;
+                                    _controlHeight = _originalDrawingHeight;
+                                  });
+
+                                  // Calculate initial crop rect after the frame renders
+                                  WidgetsBinding.instance.addPostFrameCallback(
+                                      _calculateInitialCropRect);
+
+                                  Navigator.of(context)
+                                      .pop(); // Close the drawing dialog
                                 } else {
-                                  // Taller
-                                  initialCropH = math.min(512, _maxCropHeight);
-                                  initialCropW = largestMultipleOf64(
-                                      (initialCropH * initialAspectRatio)
-                                          .round());
-                                  initialCropW =
-                                      math.min(initialCropW, _maxCropWidth);
-                                  initialCropH = largestMultipleOf64(
-                                      (initialCropW / initialAspectRatio)
-                                          .round());
-                                  initialCropH =
-                                      math.min(initialCropH, _maxCropHeight);
+                                  Navigator.of(context)
+                                      .pop(); // Close if image decoding failed
                                 }
-                                // Ensure minimum size
-                                int newWidth = math.max(64, initialCropW);
-                                int newHeight = math.max(64, initialCropH);
-                                // --- End Initialize Cropping State ---
-
-                                setState(() {
-                                  _drawingImageData =
-                                      pngBytesForDisplay; // Use original PNG for display
-                                  _hasDrawing = true;
-                                  _showCropUI = true; // Enable cropping UI
-
-                                  // Set initial slider values
-                                  width = newWidth;
-                                  height = newHeight;
-
-                                  // Reset crop rect position and display size
-                                  _cropRect = Rect.zero;
-                                  _imageDisplaySize = Size.zero;
-
-                                  // Set initial control data (will be updated by cropping before generation)
-                                  _controlImageData = _originalDrawingRgbBytes;
-                                  _controlWidth = _originalDrawingWidth;
-                                  _controlHeight = _originalDrawingHeight;
-                                });
-
-                                // Calculate initial crop rect after the frame renders
-                                WidgetsBinding.instance.addPostFrameCallback(
-                                    _calculateInitialCropRect);
-
-                                Navigator.of(context)
-                                    .pop(); // Close the drawing dialog
                               } else {
                                 Navigator.of(context)
-                                    .pop(); // Close if image decoding failed
+                                    .pop(); // Close if no image data
                               }
-                            } else {
-                              Navigator.of(context)
-                                  .pop(); // Close if no image data
-                            }
-                          },
-                          child: const Text('Save'),
-                          style: TextButton.styleFrom(
-                            padding: EdgeInsets.symmetric(horizontal: 8),
-                            foregroundColor: Colors.black,
+                            },
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      ...[
-                        Colors.black,
-                        Colors.red,
-                        Colors.blue,
-                        Colors.green,
-                        Colors.yellow,
-                        Colors.orange,
-                        Colors.purple,
-                        Colors.teal,
-                        Colors.pink,
-                        Colors.brown,
-                        Colors.grey
-                      ].map(
-                        (color) => GestureDetector(
-                          onTap: () {
-                            _drawingController.setStyle(color: color);
-                          },
-                          child: Container(
-                            margin: EdgeInsets.only(right: 8),
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.grey.shade300),
-                            ),
-                          ),
-                        ),
-                      ),
-                      ...[2.0, 5.0, 8.0, 12.0].map(
-                        (thickness) => GestureDetector(
-                          onTap: () {
-                            _drawingController.setStyle(strokeWidth: thickness);
-                          },
-                          child: Container(
-                            margin: EdgeInsets.only(right: 8),
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.grey.shade300),
-                            ),
-                            child: Center(
-                              child: Container(
-                                width: thickness,
-                                height: thickness,
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-              ),
-              Expanded(
-                child: DrawingBoard(
-                  controller: _drawingController,
-                  background: Container(
-                    width: dialogWidth,
-                    height: dialogHeight - 80,
-                    color: Colors.white,
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8.0, vertical: 8.0),
+                  child: Column(
+                    // Use Column for tools
+                    children: [
+                      // Color Selection Row
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            ...[
+                              Colors.black,
+                              Colors.white,
+                              Colors.red,
+                              Colors.orange,
+                              Colors.yellow,
+                              Colors.green,
+                              Colors.blue,
+                              Colors.indigo,
+                              Colors.purple,
+                              Colors.pink,
+                              Colors.brown,
+                              Colors.grey
+                            ].map(
+                              (color) => GestureDetector(
+                                onTap: () {
+                                  setDialogState(() {
+                                    currentColor = color;
+                                  });
+                                  _drawingController.setStyle(color: color);
+                                },
+                                child: Container(
+                                  margin: const EdgeInsets.only(right: 8),
+                                  width: 28, // Slightly larger
+                                  height: 28,
+                                  decoration: BoxDecoration(
+                                    color: color,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: currentColor == color
+                                          ? theme.colorScheme
+                                              .primary // Highlight selected
+                                          : theme.colorScheme
+                                              .border, // Use theme border
+                                      width: currentColor == color ? 3 : 1,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12), // Spacing between tools
+                      // Stroke Width Slider
+                      Row(
+                        children: [
+                          Icon(LucideIcons.minus,
+                              size: 16,
+                              color: theme.colorScheme.foreground
+                                  .withOpacity(0.6)),
+                          Expanded(
+                            child: ShadSlider(
+                              min: 1.0,
+                              max: 20.0,
+                              divisions: 19,
+                              initialValue: currentStrokeWidth,
+                              onChanged: (value) {
+                                setDialogState(() {
+                                  currentStrokeWidth = value;
+                                });
+                                _drawingController.setStyle(strokeWidth: value);
+                              },
+                            ),
+                          ),
+                          Icon(LucideIcons.plus,
+                              size: 16,
+                              color: theme.colorScheme.foreground
+                                  .withOpacity(0.6)),
+                          const SizedBox(width: 8),
+                          Text(
+                            currentStrokeWidth.toStringAsFixed(1),
+                            style: theme.textTheme.small,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  showDefaultActions: true,
-                  showDefaultTools: true,
                 ),
-              ),
-            ],
+                Expanded(
+                  child: DrawingBoard(
+                    controller: _drawingController,
+                    background: Container(
+                      width: dialogWidth,
+                      height: dialogHeight -
+                          150, // Adjust height accounting for tools
+                      // color: Colors.white, // Color is now part of decoration
+                      // Add a subtle border to frame the drawing area
+                      decoration: BoxDecoration(
+                        // Use BoxDecoration
+                        color: Colors.white, // Keep drawing area white
+                        border: Border.all(color: theme.colorScheme.border),
+                        // Optional: Add radius matching theme if desired
+                        // borderRadius: theme.radius,
+                      ),
+                    ),
+                    showDefaultActions: true, // Keep default undo/redo/clear
+                    showDefaultTools:
+                        true, // Keep default tool selection (pencil, line, etc.)
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
+      ), // End StatefulBuilder
     );
   }
 
