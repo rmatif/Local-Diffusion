@@ -1268,11 +1268,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   onChanged: (isModelLoading || isGenerating)
                       ? null
                       : (bool v) {
-                          if (useVAETiling && v) {
-                            _showTemporaryError(
-                                'TAESD is incompatible with VAE Tiling');
-                            return;
-                          }
+                          // Removed check: if (useVAETiling && v) { ... }
                           setState(() {
                             useTAESD = v;
                             if (_processor != null) {
@@ -2287,11 +2283,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                           onChanged: (isModelLoading || isGenerating)
                               ? null
                               : (bool v) {
-                                  if (useTAESD && v) {
-                                    _showTemporaryError(
-                                        'VAE Tiling is incompatible with TAESD');
-                                    return;
-                                  }
+                                  // Removed check: if (useTAESD && v) { ... }
                                   setState(() {
                                     useVAETiling = v;
                                     // Reinitialize processor if needed (already handled in original code)

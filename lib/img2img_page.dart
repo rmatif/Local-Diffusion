@@ -1450,11 +1450,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 ShadCheckbox(
                   value: useTAESD,
                   onChanged: (bool v) {
-                    if (useVAETiling && v) {
-                      _showTemporaryError(
-                          'TAESD is incompatible with VAE Tiling');
-                      return;
-                    }
+                    // Removed check: if (useVAETiling && v) { ... }
                     setState(() {
                       useTAESD = v;
                       if (_processor != null) {
@@ -2573,11 +2569,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                           onChanged: (isModelLoading || isGenerating)
                               ? null
                               : (bool v) {
-                                  if (useTAESD && v) {
-                                    _showTemporaryError(
-                                        'VAE Tiling is incompatible with TAESD');
-                                    return;
-                                  }
+                                  // Removed check: if (useTAESD && v) { ... }
                                   setState(() {
                                     useVAETiling = v;
                                     // Reinitialize processor if needed
