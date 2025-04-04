@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'package:permission_handler/permission_handler.dart'; // Added
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'ffi_bindings.dart';
@@ -21,11 +22,80 @@ import 'outpainting_page.dart';
 import 'image_processing_utils.dart'; // Import the new utility
 
 void main() {
+  // Ensure Flutter bindings are initialized before checking permissions
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+// Add WidgetsBindingObserver to listen for app lifecycle changes
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  bool _hasPermission = false;
+  bool _isLoading = true; // Track initial loading state
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkPermissionStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Re-check permission when app resumes
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPermissionStatus();
+    }
+  }
+
+  Future<void> _checkPermissionStatus() async {
+    // Don't show loading indicator on subsequent checks (e.g., after resuming)
+    // Only show it during the initial initState check.
+    if (mounted && _isLoading) {
+      setState(() {
+        // Keep isLoading true until check is complete
+      });
+    }
+
+    final status = await Permission.manageExternalStorage.status;
+    if (mounted) {
+      // Check if the widget is still mounted before calling setState
+      setState(() {
+        _hasPermission = status.isGranted;
+        _isLoading = false; // Mark loading as complete
+      });
+    }
+    // If permission is denied and we are not loading anymore, prompt the user.
+    // Avoid prompting immediately on first load if denied, let the UI show first.
+    if (!_hasPermission && !_isLoading) {
+      // Optionally, you could automatically trigger the request here,
+      // but it's often better UX to let the user click a button.
+      // _requestPermission();
+    }
+  }
+
+  // Removed unused _requestPermission function
+
+  // Function to request the MANAGE_EXTERNAL_STORAGE permission
+  // This usually opens the specific system screen for this permission.
+  Future<void> _requestManageStoragePermission() async {
+    await Permission.manageExternalStorage.request();
+    // Re-check status after the user potentially interacts with the settings screen
+    _checkPermissionStatus();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ShadApp(
@@ -33,7 +103,65 @@ class MyApp extends StatelessWidget {
         brightness: Brightness.dark,
         colorScheme: const ShadSlateColorScheme.dark(),
       ),
-      home: const StableDiffusionApp(),
+      home: _isLoading
+          ? const Scaffold(
+              body: Center(
+                  child:
+                      CircularProgressIndicator())) // Show loading indicator initially
+          : _hasPermission
+              ? const StableDiffusionApp()
+              : PermissionRequiredScreen(
+                  onRequestPermission:
+                      _requestManageStoragePermission), // Pass the request function
+    );
+  }
+}
+
+// New Screen to show when permission is denied
+class PermissionRequiredScreen extends StatelessWidget {
+  final VoidCallback onRequestPermission;
+
+  const PermissionRequiredScreen(
+      {super.key, required this.onRequestPermission});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return Scaffold(
+      backgroundColor: theme.colorScheme.background,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.folder_off_outlined, // Or another relevant icon
+                size: 80,
+                color: theme.colorScheme.primary.withOpacity(0.7),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Storage Permission Required',
+                style: theme.textTheme.h2.copyWith(fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'This app needs permission to read and write files (including models) in storage to function correctly. Please grant the "All files access" permission in the app settings.',
+                style: theme.textTheme.p,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              ShadButton(
+                onPressed: onRequestPermission, // Use the passed function
+                child: const Text('Grant Permission'), // Changed button text
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
