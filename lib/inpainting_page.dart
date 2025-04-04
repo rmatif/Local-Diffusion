@@ -2792,31 +2792,70 @@ class _InpaintingPageState extends State<InpaintingPage>
                 const SizedBox(width: 8),
                 ShadSwitch(
                   value: useControlNet,
-                  onChanged: (bool v) {
-                    setState(() {
-                      useControlNet = v;
-                      if (_processor != null) {
-                        String currentModelPath = _processor!.modelPath;
-                        bool currentFlashAttention =
-                            _processor!.useFlashAttention;
-                        SDType currentModelType = _processor!.modelType;
-                        Schedule currentSchedule = _processor!.schedule;
-                        String? originalControlNetPath = _controlNetPath;
-                        if (!v) {
-                          _controlNetPath = null;
-                        }
-                        _initializeProcessor(
-                          currentModelPath,
-                          currentFlashAttention,
-                          currentModelType,
-                          currentSchedule,
-                        );
-                        if (!v) {
-                          _controlNetPath = originalControlNetPath;
-                        }
-                      }
-                    });
-                  },
+                  onChanged: (isModelLoading || isGenerating)
+                      ? null // Disable switch while loading or generating
+                      : (bool v) {
+                          setState(() {
+                            useControlNet = v;
+                            // Only reinitialize if a main model is already loaded
+                            if (_processor != null) {
+                              String currentModelPath = _processor!.modelPath;
+                              bool currentFlashAttention =
+                                  _processor!.useFlashAttention;
+                              SDType currentModelType = _processor!.modelType;
+                              Schedule currentSchedule = _processor!.schedule;
+
+                              if (v) {
+                                // Enabling ControlNet
+                                // Reload ONLY if a ControlNet model path is actually set.
+                                if (_controlNetPath != null) {
+                                  print(
+                                      "Re-initializing processor to ENABLE ControlNet with path: $_controlNetPath");
+                                  _initializeProcessor(
+                                    currentModelPath,
+                                    currentFlashAttention,
+                                    currentModelType,
+                                    currentSchedule,
+                                  );
+                                } else {
+                                  print(
+                                      "Enabled ControlNet switch, but no ControlNet model loaded. No reload needed.");
+                                }
+                              } else {
+                                // Disabling ControlNet
+                                // Reload ONLY if a ControlNet model path was previously set.
+                                if (_controlNetPath != null) {
+                                  print(
+                                      "Re-initializing processor to DISABLE ControlNet. Original path was: $_controlNetPath");
+                                  String? originalControlNetPath =
+                                      _controlNetPath; // Store original path
+                                  _controlNetPath =
+                                      null; // Temporarily remove path for reload
+
+                                  _initializeProcessor(
+                                    currentModelPath,
+                                    currentFlashAttention,
+                                    currentModelType,
+                                    currentSchedule,
+                                  );
+
+                                  // DO NOT restore the path. Clear it permanently when disabling.
+                                  // _controlNetPath = originalControlNetPath;
+                                  // Remove the loaded indicator regardless of reload
+                                  loadedComponents.remove('ControlNet');
+                                } else {
+                                  print(
+                                      "Disabled ControlNet switch, but no ControlNet model was loaded anyway. No reload needed.");
+                                  // Still remove the indicator if it somehow exists
+                                  loadedComponents.remove('ControlNet');
+                                }
+                              }
+                            } else {
+                              print(
+                                  "ControlNet switch toggled, but no main model loaded. No action taken.");
+                            }
+                          });
+                        },
                 ),
               ],
             ),
