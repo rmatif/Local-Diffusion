@@ -1,16 +1,19 @@
 
 # Local Diffusion
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) [![Flutter Badge](https://img.shields.io/badge/Flutter-%2302569B.svg?style=flat&logo=Flutter&logoColor=white)](https://flutter.dev) [![Android Badge](https://img.shields.io/badge/Android-3DDC84?style=flat&logo=android&logoColor=white)](https://developer.android.com) [![Ko-fi Badge](https://img.shields.io/badge/Ko--fi-F16061?style=flat&logo=ko-fi&logoColor=white)](https://ko-fi.com/rmatif)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) [![Flutter Badge](https://img.shields.io/badge/Flutter-%2302569B.svg?style=flat&logo=Flutter&logoColor=white)](https://flutter.dev) [![Android Badge](https://img.shields.io/badge/Android-3DDC84?style=flat&logo=android&logoColor=white)](https://developer.android.com) [![Ko-fi Badge](https://img.shields.io/badge/Ko--fi-F16061?style=flat&logo=ko-fi&logoColor=white)](https://ko-fi.com/rmatif)<br>
 [![Latest Release](https://img.shields.io/github/v/release/rmatif/Local-Diffusion?label=Latest%20Release&color=brightgreen)](https://github.com/rmatif/Local-Diffusion/releases/latest)
+
+<br>
+
 **Run the latest diffusion models directly on your mobile device.**
 
 <br> 
 <p align="center"> 
-  <img src="assets/icon/icon.png" alt="App Icon" width="128" style="border-radius: 15%;"> 
+  <img src="assets/icon/icon.png" alt="App Icon" width="256" style="border-radius: 35%;"> 
 </p>
 <br>
 
-Local Diffusion is a Flutter application bringing the power of Stable Diffusion models to Android, powered by the efficient stable-diffusion.cpp library. Generate images locally without needing powerful desktop hardware or cloud services.
+Local Diffusion is a Flutter application that brings Diffusion models to Android, powered by the amazing stable-diffusion.cpp
 
 ## Download
 
@@ -113,7 +116,7 @@ Ensure you have the Flutter SDK and Android development environment set up.
 `flutter run`
 
 # Release
-flutter run --release`
+`flutter run --release`
     
 
 ### Build Release APK
@@ -124,6 +127,6 @@ The output APK will be located at build/app/outputs/flutter-apk/app-release.apk.
 
 ## Credits
 
--   **Core Engine:**  [stable-diffusion.cpp by leejet](https://www.google.com/url?sa=E&q=https%3A%2F%2Fgithub.com%2Fleejet%2Fstable-diffusion.cpp)
+-   **Core Engine:**  [stable-diffusion.cpp by leejet](https://www.github.com%2Fleejet%2Fstable-diffusion.cpp)
     
--   **UI Components:**  [shadcn/ui & flutter-shadcn-ui by nank1ro](https://www.google.com/url?sa=E&q=https%3A%2F%2Fgithub.com%2Fnank1ro%2Fflutter-shadcn-ui)
+-   **UI Components:**  [shadcn/ui & flutter-shadcn-ui by nank1ro](https://www.github.com%2Fnank1ro%2Fflutter-shadcn-ui)
