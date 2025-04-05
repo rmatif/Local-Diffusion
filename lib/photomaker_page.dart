@@ -429,6 +429,7 @@ class _PhotomakerPageState extends State<PhotomakerPage>
     String selectedQuantization = 'NONE';
     String selectedSchedule = 'DEFAULT';
     bool useFlashAttention = false;
+    String? flashAttentionError; // Added state for error message
 
     final List<String> quantizationOptions = [
       'NONE',
@@ -503,9 +504,39 @@ class _PhotomakerPageState extends State<PhotomakerPage>
               const SizedBox(height: 16),
               ShadSwitch(
                 value: useFlashAttention,
-                onChanged: (v) => setState(() => useFlashAttention = v),
+                onChanged: (v) {
+                  // Check backend and desired state
+                  if (_selectedBackend != 'CPU' && v) {
+                    // Trying to enable on non-CPU backend
+                    setState(() {
+                      flashAttentionError =
+                          'Flash Attention is supported only on CPU';
+                      // Do NOT set useFlashAttention = true
+                    });
+                  } else {
+                    // Either CPU backend or turning the switch off
+                    setState(() {
+                      useFlashAttention = v;
+                      flashAttentionError = null; // Clear error if any
+                    });
+                  }
+                },
                 label: const Text('Use Flash Attention'),
               ),
+              // Display error message if it exists
+              if (flashAttentionError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    flashAttentionError!,
+                    style: TextStyle(
+                      color: ShadTheme.of(context)
+                          .colorScheme
+                          .destructive, // Use theme's destructive color
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
             ],
           ),
           actions: [
