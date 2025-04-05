@@ -148,11 +148,14 @@ class StableDiffusionProcessor {
   Stream<List<String>> get logListStream =>
       _logListController.stream; // Added getter for logs
 
+  // Removed backend parameter from constructor
+
   StableDiffusionProcessor({
     required this.modelPath,
     required this.useFlashAttention,
     required this.modelType,
     required this.schedule,
+    // removed required this.backend,
     this.loraPath,
     this.taesdPath,
     this.useTinyAutoencoder = false,
@@ -215,7 +218,10 @@ class StableDiffusionProcessor {
     try {
       _sdIsolate = await Isolate.spawn(
         _isolateEntryPoint,
-        {'port': _receivePort.sendPort},
+        {
+          'port': _receivePort.sendPort,
+          'backend': FFIBindings.getCurrentBackend()
+        }, // Pass current backend from FFI bindings
       );
 
       _receivePort.listen((message) async {
@@ -308,7 +314,28 @@ class StableDiffusionProcessor {
   // Isolate entry point - runs in the separate isolate
   static void _isolateEntryPoint(Map<String, dynamic> args) {
     final SendPort mainSendPort = args['port'];
+    final String backendName = args['backend']; // Get backend name
     _globalSendPort = mainSendPort; // Set the global send port for callbacks
+
+    // Initialize FFI Bindings *within the isolate* first!
+    print("Isolate: Initializing FFI bindings for backend: $backendName");
+    try {
+      FFIBindings.initializeBindings(backendName);
+      print("Isolate: FFI bindings initialized successfully for $backendName.");
+    } catch (e) {
+      print(
+          "Isolate: FATAL ERROR initializing FFI bindings for $backendName: $e");
+      mainSendPort.send({
+        'type': 'error',
+        'errorType': 'ffiInitError',
+        'message':
+            'Failed to initialize native library ($backendName) in isolate: $e'
+      });
+      // Cannot proceed without FFI bindings
+      return;
+    }
+
+    // Now setup callbacks and ports
     _logCallbackPtr =
         Pointer.fromFunction<LogCallbackNative>(_staticLogCallback);
     _progressCallbackPtr =

@@ -89,6 +89,13 @@ class _PhotomakerPageState extends State<PhotomakerPage>
   // --- End added state variables ---
   bool normalizeInput = false; // Added for normalize_input option
   bool _showInfoMessage = true; // Flag to show the initial info message
+  String _selectedBackend =
+      FFIBindings.getCurrentBackend(); // Get initial backend
+  final List<String> _availableBackends = [
+    'CPU',
+    'Vulkan',
+    'OpenCL'
+  ]; // Available backends
 
   final List<String> samplingMethods = const [
     'euler_a',
@@ -953,13 +960,89 @@ class _PhotomakerPageState extends State<PhotomakerPage>
                 ],
               ),
             ),
+            // --- Backend Selection Row ---
+            Row(
+              children: [
+                const Text('Backend:'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<String>(
+                    placeholder: Text(_selectedBackend),
+                    enabled: !(isModelLoading ||
+                        isGenerating), // Disable during loading/generation
+                    options: _availableBackends
+                        .map((backend) => ShadOption(
+                              value: backend,
+                              child: Text(backend),
+                            ))
+                        .toList(),
+                    selectedOptionBuilder: (context, value) => Text(value),
+                    onChanged: (String? newBackend) {
+                      if (newBackend != null &&
+                          newBackend != _selectedBackend) {
+                        if (_processor != null) {
+                          // Show confirmation dialog
+                          showShadDialog(
+                            context: context,
+                            builder: (context) => ShadDialog.alert(
+                              title: const Text('Change Backend?'),
+                              description: const Text(
+                                  'Changing the backend requires unloading the current model and resetting settings. Proceed?'),
+                              actions: [
+                                ShadButton.outline(
+                                  onPressed: () => Navigator.of(context).pop(),
+                                  child: const Text('Cancel'),
+                                ),
+                                ShadButton.destructive(
+                                  onPressed: () {
+                                    Navigator.of(context).pop(); // Close dialog
+                                    print(
+                                        "Photomaker: Backend changed with model loaded. Resetting state.");
+                                    _resetState(); // Reset state first
+                                    print(
+                                        "Photomaker: Initializing FFI bindings for: $newBackend");
+                                    FFIBindings.initializeBindings(
+                                        newBackend); // Re-init FFI
+                                    setState(() {
+                                      _selectedBackend = newBackend;
+                                      _cores = FFIBindings.getCores() *
+                                          2; // Re-fetch cores
+                                    });
+                                    print(
+                                        "Photomaker: Backend changed to: $_selectedBackend");
+                                  },
+                                  child: const Text('Confirm Change'),
+                                ),
+                              ],
+                            ),
+                          );
+                        } else {
+                          // No model loaded, just change the backend
+                          print(
+                              "Photomaker: Initializing FFI bindings for: $newBackend");
+                          FFIBindings.initializeBindings(
+                              newBackend); // Re-init FFI
+                          setState(() {
+                            _selectedBackend = newBackend;
+                            _cores =
+                                FFIBindings.getCores() * 2; // Re-fetch cores
+                          });
+                          print(
+                              "Photomaker: Backend changed to: $_selectedBackend");
+                        }
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16), // Spacing after backend dropdown
+            // --- Model/Photomaker Loading Row ---
             Row(
               children: [
                 ShadButton(
                   enabled: !(isModelLoading || isGenerating),
                   onPressed: () async {
-                    setState(
-                        () => _showInfoMessage = false); // Hide info message
                     setState(
                         () => _showInfoMessage = false); // Hide info message
                     final modelDirPath = await getModelDirectory();

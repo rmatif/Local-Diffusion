@@ -62,6 +62,27 @@ class UpscalerProcessor {
     final int nThreads = args['nThreads'];
     final int wtype = args['wtype'];
 
+    // --- Initialize FFI Bindings for CPU within the Upscaler Isolate ---
+    print("Upscaler Isolate: Initializing FFI bindings for CPU backend.");
+    try {
+      // Force initialization with the CPU backend library
+      FFIBindings.initializeBindings('CPU');
+      print("Upscaler Isolate: FFI bindings initialized successfully for CPU.");
+    } catch (e) {
+      print(
+          "Upscaler Isolate: FATAL ERROR initializing FFI bindings for CPU: $e");
+      mainSendPort.send({
+        'type': 'error',
+        'message':
+            'Failed to initialize native library (CPU) in Upscaler isolate: $e'
+      });
+      // Cannot proceed without FFI bindings
+      // Close the port? Upscaler doesn't have a receive port setup yet here.
+      // We should probably return early.
+      return;
+    }
+    // --- End FFI Initialization ---
+
     final ReceivePort isolateReceivePort = ReceivePort();
     mainSendPort.send(isolateReceivePort.sendPort);
 

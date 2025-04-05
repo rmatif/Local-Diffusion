@@ -82,6 +82,13 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
   bool _isDiffusionModelType = false; // Added state for the new switch
+  String _selectedBackend =
+      FFIBindings.getCurrentBackend(); // Get initial backend
+  final List<String> _availableBackends = [
+    'CPU',
+    'Vulkan',
+    'OpenCL'
+  ]; // Available backends
 
   // --- State for Advanced Sampling Options (copied from main.dart) ---
   double eta = 0.0; // New state for eta slider
@@ -1320,6 +1327,84 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 ],
               ),
             ),
+            // --- Backend Selection Row ---
+            Row(
+              children: [
+                const Text('Backend:'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<String>(
+                    placeholder: Text(_selectedBackend),
+                    enabled: !(isModelLoading ||
+                        isGenerating), // Disable during loading/generation
+                    options: _availableBackends
+                        .map((backend) => ShadOption(
+                              value: backend,
+                              child: Text(backend),
+                            ))
+                        .toList(),
+                    selectedOptionBuilder: (context, value) => Text(value),
+                    onChanged: (String? newBackend) {
+                      if (newBackend != null &&
+                          newBackend != _selectedBackend) {
+                        if (_processor != null) {
+                          // Show confirmation dialog
+                          showShadDialog(
+                            context: context,
+                            builder: (context) => ShadDialog.alert(
+                              title: const Text('Change Backend?'),
+                              description: const Text(
+                                  'Changing the backend requires unloading the current model and resetting settings. Proceed?'),
+                              actions: [
+                                ShadButton.outline(
+                                  onPressed: () => Navigator.of(context).pop(),
+                                  child: const Text('Cancel'),
+                                ),
+                                ShadButton.destructive(
+                                  onPressed: () {
+                                    Navigator.of(context).pop(); // Close dialog
+                                    print(
+                                        "Img2Img: Backend changed with model loaded. Resetting state.");
+                                    _resetState(); // Reset state first
+                                    print(
+                                        "Img2Img: Initializing FFI bindings for: $newBackend");
+                                    FFIBindings.initializeBindings(
+                                        newBackend); // Re-init FFI
+                                    setState(() {
+                                      _selectedBackend = newBackend;
+                                      _cores = FFIBindings.getCores() *
+                                          2; // Re-fetch cores
+                                    });
+                                    print(
+                                        "Img2Img: Backend changed to: $_selectedBackend");
+                                  },
+                                  child: const Text('Confirm Change'),
+                                ),
+                              ],
+                            ),
+                          );
+                        } else {
+                          // No model loaded, just change the backend
+                          print(
+                              "Img2Img: Initializing FFI bindings for: $newBackend");
+                          FFIBindings.initializeBindings(
+                              newBackend); // Re-init FFI
+                          setState(() {
+                            _selectedBackend = newBackend;
+                            _cores =
+                                FFIBindings.getCores() * 2; // Re-fetch cores
+                          });
+                          print(
+                              "Img2Img: Backend changed to: $_selectedBackend");
+                        }
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16), // Spacing after backend dropdown
+            // --- Model Loading Row ---
             Row(
               children: [
                 ShadButton(

@@ -210,11 +210,13 @@ class Img2ImgProcessor {
   Future<void> _initializeIsolate() async {
     _loadingController.add(true);
     try {
+      // Get the current backend BEFORE spawning the isolate
+      final currentBackend = FFIBindings.getCurrentBackend();
+      print("Img2ImgProcessor: Spawning isolate with backend: $currentBackend");
       _sdIsolate = await Isolate.spawn(
         _isolateEntryPoint,
-        {
-          'port': _receivePort.sendPort,
-        },
+        // Pass the backend name and port in a single map as the message
+        {'port': _receivePort.sendPort, 'backend': currentBackend},
       );
 
       _receivePort.listen((message) async {
@@ -296,15 +298,40 @@ class Img2ImgProcessor {
     }
   }
 
+  // Isolate entry point - runs in the separate isolate
   static void _isolateEntryPoint(Map<String, dynamic> args) {
     final SendPort mainSendPort = args['port'];
-    _globalSendPort = mainSendPort;
+    final String backendName = args['backend']; // Get backend name
+    _globalSendPort = mainSendPort; // Set the global send port for callbacks
+
+    // Initialize FFI Bindings *within the isolate* first!
+    print(
+        "Img2Img Isolate: Initializing FFI bindings for backend: $backendName");
+    try {
+      FFIBindings.initializeBindings(backendName);
+      print(
+          "Img2Img Isolate: FFI bindings initialized successfully for $backendName.");
+    } catch (e) {
+      print(
+          "Img2Img Isolate: FATAL ERROR initializing FFI bindings for $backendName: $e");
+      mainSendPort.send({
+        'type': 'error',
+        'errorType': 'ffiInitError',
+        'message':
+            'Failed to initialize native library ($backendName) in isolate: $e'
+      });
+      // Cannot proceed without FFI bindings
+      return;
+    }
+
+    // Now setup callbacks and ports
     _logCallbackPtr =
         Pointer.fromFunction<LogCallbackNative>(_staticLogCallback);
     _progressCallbackPtr =
         Pointer.fromFunction<ProgressCallbackNative>(_staticProgressCallback);
     final ReceivePort isolateReceivePort = ReceivePort();
-    mainSendPort.send(isolateReceivePort.sendPort);
+    mainSendPort.send(
+        isolateReceivePort.sendPort); // Send the isolate's port back to main
 
     Pointer<Void>? ctx;
     print("Isolate started");

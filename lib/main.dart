@@ -22,8 +22,10 @@ import 'outpainting_page.dart';
 import 'image_processing_utils.dart'; // Import the new utility
 
 void main() {
-  // Ensure Flutter bindings are initialized before checking permissions
+  // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
+  // Initialize FFI bindings with the default backend BEFORE running the app
+  FFIBindings.initializeBindings('CPU');
   runApp(const MyApp());
 }
 
@@ -285,6 +287,13 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
   bool _isDiffusionModelType = false; // Added state for the new switch
+  String _selectedBackend = 'CPU'; // State for the selected backend
+  final List<String> _availableBackends = [
+    'CPU',
+    'Vulkan',
+    'OpenCL'
+  ]; // Available backends
+
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
     setState(() {
@@ -354,6 +363,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   @override
   void initState() {
     super.initState();
+    // Ensure bindings are initialized before getting cores
+    // FFIBindings.initializeBindings(_selectedBackend); // Moved to main()
     _cores = FFIBindings.getCores() * 2;
     _cannyProcessor = CannyProcessor();
     _cannyProcessor!.init();
@@ -467,6 +478,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     });
     _processor?.dispose();
     _processor = StableDiffusionProcessor(
+      // Removed backend: _selectedBackend,
       modelPath: modelPath,
       useFlashAttention: useFlashAttention,
       modelType: modelType,
@@ -1214,6 +1226,83 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 ],
               ),
             ),
+            // --- Backend Selection Row ---
+            Row(
+              children: [
+                const Text('Backend:'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ShadSelect<String>(
+                    placeholder: Text(_selectedBackend),
+                    enabled: !(isModelLoading ||
+                        isGenerating), // Disable during loading/generation
+                    options: _availableBackends
+                        .map((backend) => ShadOption(
+                              value: backend,
+                              child: Text(backend),
+                            ))
+                        .toList(),
+                    selectedOptionBuilder: (context, value) => Text(value),
+                    onChanged: (String? newBackend) {
+                      if (newBackend != null &&
+                          newBackend != _selectedBackend) {
+                        // Check if a model is loaded
+                        if (_processor != null) {
+                          // Show confirmation dialog
+                          showShadDialog(
+                            context: context,
+                            builder: (context) => ShadDialog.alert(
+                              title: const Text('Change Backend?'),
+                              description: const Text(
+                                  'Changing the backend requires unloading the current model and resetting settings. Proceed?'),
+                              actions: [
+                                ShadButton.outline(
+                                  onPressed: () => Navigator.of(context).pop(),
+                                  child: const Text('Cancel'),
+                                ),
+                                ShadButton.destructive(
+                                  onPressed: () {
+                                    Navigator.of(context).pop(); // Close dialog
+                                    print(
+                                        "Backend changed with model loaded. Resetting state.");
+                                    _resetState(); // Reset state first
+                                    print(
+                                        "Initializing FFI bindings for: $newBackend");
+                                    FFIBindings.initializeBindings(
+                                        newBackend); // Re-init FFI
+                                    setState(() {
+                                      _selectedBackend = newBackend;
+                                      // Re-fetch cores in case it changes based on backend (though unlikely)
+                                      _cores = FFIBindings.getCores() * 2;
+                                    });
+                                    print(
+                                        "Backend changed to: $_selectedBackend");
+                                  },
+                                  child: const Text('Confirm Change'),
+                                ),
+                              ],
+                            ),
+                          );
+                        } else {
+                          // No model loaded, just change the backend
+                          print("Initializing FFI bindings for: $newBackend");
+                          FFIBindings.initializeBindings(
+                              newBackend); // Re-init FFI
+                          setState(() {
+                            _selectedBackend = newBackend;
+                            // Re-fetch cores
+                            _cores = FFIBindings.getCores() * 2;
+                          });
+                          print("Backend changed to: $_selectedBackend");
+                        }
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16), // Spacing after backend dropdown
+            // --- Model Loading Row ---
             Row(
               children: [
                 ShadButton(

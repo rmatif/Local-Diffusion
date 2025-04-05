@@ -138,6 +138,25 @@ class CannyProcessor {
     final receivePort = ReceivePort();
     sendPort.send(receivePort.sendPort);
 
+    // --- Initialize FFI Bindings for CPU within the Canny Isolate ---
+    print("Canny Isolate: Initializing FFI bindings for CPU backend.");
+    try {
+      // Force initialization with the CPU backend library
+      FFIBindings.initializeBindings('CPU');
+      print("Canny Isolate: FFI bindings initialized successfully for CPU.");
+    } catch (e) {
+      print("Canny Isolate: FATAL ERROR initializing FFI bindings for CPU: $e");
+      sendPort.send({
+        'type': 'error',
+        'message':
+            'Failed to initialize native library (CPU) in Canny isolate: $e'
+      });
+      // Cannot proceed without FFI bindings
+      receivePort.close(); // Close the port to allow isolate termination
+      return;
+    }
+    // --- End FFI Initialization ---
+
     receivePort.listen((message) {
       if (message is Map && message['command'] == 'processCanny') {
         try {
