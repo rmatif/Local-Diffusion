@@ -30,10 +30,12 @@ apply_2.md
 .pub-cache/
 .pub/
 /build/
+/adb/
 /stable-diffusion.cpp/
 # Symbolication related
 app.*.symbols
-
+push.sh
+opencl_fix_summary.md
 # Obfuscation related
 app.*.map.json
 
