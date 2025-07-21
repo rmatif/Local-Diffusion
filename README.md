@@ -127,6 +127,6 @@ The output APK will be located at build/app/outputs/flutter-apk/app-release.apk.
 
 ## Credits
 
--   **Core Engine:**  [stable-diffusion.cpp by leejet](https://www.github.com%2Fleejet%2Fstable-diffusion.cpp)
+-   **Core Engine:**  [stable-diffusion.cpp by leejet](https://www.github.com/leejet/stable-diffusion.cpp)
     
--   **UI Components:**  [shadcn/ui & flutter-shadcn-ui by nank1ro](https://www.github.com%2Fnank1ro%2Fflutter-shadcn-ui)
+-   **UI Components:**  [shadcn/ui & flutter-shadcn-ui by nank1ro](https://www.github.com/nank1ro/flutter-shadcn-ui)
